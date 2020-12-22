@@ -286,13 +286,16 @@ def get_probe_options(config_attributes_list, index_counter, rem_con, old_probe_
         options_config_split = options_config.split()
         options_config_new = " ".join(options_config_split)
         formatted_options_configs.append(options_config_new)
-
-    #print(f'\nformatted_options_configs is: {formatted_options_configs}')
     for config_attribute in config_attributes_list:
-        #print(f'config_attribute is: {config_attribute}')
-        #print(f'old_probe_configs_dict is: {old_probe_configs_dict}')
-        if options_type == 'http' and index_counter > 3: # Another inconsistency in the attribute string names. Include ' =' for http type.
-            old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_configs[index_counter].partition(config_attribute + ' = ')[2]
+        if options_type == 'http': # Another inconsistency in the attribute string names where http has = sign in them.
+            old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_configs[index_counter].split()[-1]
+        elif config_attribute == 'Infinistream Console Support' and old_probe_configs_dict['agent_configs'][0]['model_number'] == 'vSTREAM':
+            continue # This setting does not exist for vStreams.
+        elif config_attribute == 'Eth0 GRE Monitoring' and old_probe_configs_dict['agent_configs'][0]['model_number'] == 'vSTREAM':
+            continue # This setting does not exist for vStreams.
+        # Another inconsistency in the attribute string names. Using spaces rather than underscores.
+        elif config_attribute == 'Traffic Violations' or config_attribute == 'nGeniusONE Managed' or config_attribute == 'Health Monitoring' or config_attribute == 'Network Analyzer Support':
+            old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_configs[index_counter].split()[-1]
         else:
             old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_configs[index_counter].partition(config_attribute + ' ')[2]
         index_counter += 1
@@ -315,7 +318,6 @@ def get_probe_options_interface_specific(config_attributes_list, interface_list,
     formatted_options_configs = [] # create an empty list to hold the options settings returned by the probe.
     loop_counter = index_counter # The index_counter is our starting point for the elements returned by get 'options_type'.
     interface_loop_counter = 0 # Needed to send get asi for the first interface, 'y' for each subsequent interface.
-    la_burst_is_on = True # A flag to use when the config options change due to a setting being 'on'.
     for interface in interface_list:
         old_probe_configs_dict[options_type][0]['interface '+ interface] = [{}]
     for config_attribute in config_attributes_list:
@@ -338,11 +340,22 @@ def get_probe_options_interface_specific(config_attributes_list, interface_list,
                 #print(f'\noptions_config_new is: {options_config_new}')
                 formatted_options_configs.append(options_config_new)
             #print(f'\nformatted_options_configs is: {formatted_options_configs}')
-            config_attribute_verbose = formatted_options_configs[2].partition(config_attribute + ' ')[2].lower()
-            if 'is on ' in config_attribute_verbose or 'is enabled ' in config_attribute_verbose or 'on on ' in config_attribute_verbose: # Some settins use on, some enabled.
-                old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'on'
-            else:
-                old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'off'
+            if config_attribute == 'skt_vlan_enable':
+                if 'skt_vlan_enable is ON' in formatted_options_configs[2]:
+                    old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'on'
+                else:
+                    old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'off'
+
+            if config_attribute == 'span_duplicate':
+                if 'On' in formatted_options_configs[3]:
+                    old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'on'
+                else:
+                    old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'off'
+            if config_attribute == 'ssl_sni':
+                if 'is enabled on' in formatted_options_configs[2]:
+                    old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'on'
+                else:
+                    old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'off'
     return old_probe_configs_dict
 
 def get_probe_options_per_interface(config_attributes_list, interface_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger):
@@ -361,7 +374,6 @@ def get_probe_options_per_interface(config_attributes_list, interface_list, inde
     formatted_options_configs = [] # create an empty list to hold the options settings returned by the probe.
     loop_counter = index_counter # The index_counter is our starting point for the elements returned by get 'options_type'.
     interface_loop_counter = 0 # Needed to send get asi for the first interface, 'y' for each subsequent interface.
-    la_burst_is_on = True # A flag to use when the config options change due to a setting being 'on'.
     for interface in interface_list:
         old_probe_configs_dict[options_type][0]['interface '+ interface] = [{}]
 
@@ -390,20 +402,20 @@ def get_probe_options_per_interface(config_attributes_list, interface_list, inde
             options_config_split = options_config.split()
             options_config_new = " ".join(options_config_split)
             formatted_options_configs.append(options_config_new)
-        # print(f'\nformatted_options_configs is: {formatted_options_configs}')
+        #print(f'\nformatted_options_configs is: {formatted_options_configs}')
         for config_attribute in config_attributes_list:
             #print(f'loop_counter is: {loop_counter}')
             #print(f'\nconfig_attribute is: {config_attribute}')
-            if la_burst_is_on == False: # The menu is dynamic. If la_burst is on, there will be an extra element la_type.
-                if config_attribute == 'la_type':
-                    la_burst_is_on = True # Reset the la_burst_is_on flag to True in case the next interface has it set to on.
-                    continue # If the la_burst is off, and this loop config_attribute is is 'la_type, skip to the next valid attribute.
-                else:
-                    continue # If the la_burst is off, then skip the next config_attribute 'la_type'.
-            old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_configs[loop_counter].partition(config_attribute + ' ')[2]
             if config_attribute == 'la_burst': # Check the setting for 'la_burst' for this interface that we just set.
-                if old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] == 'off':
-                    la_burst_is_on = False # If la_burst is off for this interface, then set the flag to False.
+                print(f'\nformatted_options_configs is: {formatted_options_configs}')
+                print(f"\nformatted_options_configs[loop_counter].partition(config_attribute + ' ')[2] is: {formatted_options_configs[loop_counter].partition(config_attribute + ' ')[2]}")
+                if formatted_options_configs[loop_counter].partition(config_attribute + ' ')[2] == 'off':
+                    old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_configs[loop_counter].partition(config_attribute + ' ')[2]
+                    old_probe_configs_dict[options_type][0]['interface '+ interface][0]['la_type'] = "\\-" # la_burst is off, put a "-" in for la_type.
+                else: # la_burst is on
+                    old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_configs[loop_counter].partition(config_attribute + ' ')[2]
+            else:
+                old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_configs[loop_counter].partition(config_attribute + ' ')[2]
 
             loop_counter += 1 # Increment the formatted_options_configs index number we use for each config_attribute loop.
         if options_type == 'asi': # The menu for the first interface on get asi has two extra elements.
@@ -501,6 +513,51 @@ def get_probe_options_single_command_multi_interface(config_attributes_list, int
 
     return old_probe_configs_dict
 
+def get_probe_security_options(config_attributes_list, index_counter, rem_con, old_probe_configs_dict, logger):
+    """
+    There is no 'get security_options' cli command, so we must get these setting directly from the menu.
+    The list of options returned by the probe will be used to fill in the attributes for the old_probe_configs_dict.
+    :config_attributes_list: A list of attribute names to be entered into the old_probe_configs_dict.
+    :index_counter: An integer counter used to access each config element as we loop through the interfaces.
+    :rem_con: An instance of the remote console shell session to the probe.
+    :old_probe_configs_dict: A dictionary of all the probe configurations.
+    :return: False if any command fails, The filled in old_probe_configs_dict if all commands pass.
+    """
+
+    formatted_options_configs = [] # Start with an empty list.
+    loop_counter = index_counter # This is the starting point for reading elements from the formatted_options_configs.
+
+    command = "quit\n" # Get out of the command line and back to the main menu
+    output = execute_single_command_on_remote(command, rem_con, logger)
+    if output == False:
+        return False
+    if 'Probe IP V4 address' not in output:
+        return False
+
+    command = "13\n" # Get into the security options menu
+    output = execute_single_command_on_remote(command, rem_con, logger)
+    if output == False:
+        return False
+    if 'Secure Access Menu:' not in output:
+        return False
+
+    options_configs = output.splitlines()
+    for options_config in options_configs:
+        options_config_split = options_config.split()
+        options_config_new = " ".join(options_config_split)
+        formatted_options_configs.append(options_config_new)
+    for config_attribute in config_attributes_list:
+        if config_attribute == 'capture_slice_size':
+            #print(f"formatted_options_configs[loop_counter].partition('Change capture slice size : ')[2] is: {formatted_options_configs[loop_counter].partition('Change capture slice size : ')[2]}")
+            old_probe_configs_dict['security_options'][0][config_attribute] = formatted_options_configs[loop_counter].partition('Change capture slice size : ')[2]
+        if config_attribute == 'data_capture':
+            #print(f"formatted_options_configs[loop_counter].partition('Toggle data capture : ')[2] is: {formatted_options_configs[loop_counter].partition('Toggle data capture : ')[2]}")
+            old_probe_configs_dict['security_options'][0][config_attribute] = formatted_options_configs[loop_counter].partition('Toggle data capture : ')[2].lower()
+        loop_counter += 1
+
+    return old_probe_configs_dict
+
+
 def do_agent_reset(command, rem_con, logger):
     """
     Sends to the remote console either a 'y' yes to respond to a reset agent confirmation message from
@@ -535,7 +592,7 @@ def do_agent_reset(command, rem_con, logger):
     display_spinner(spinner, timer)
 
     while True:
-        print('\nWe are trying to get back into localconsole following an agent reset')
+        #print('\nWe are trying to get back into localconsole following an agent reset')
         command = "localconsole\n" # Following an agent reset, you have to launch localconsole again.
         output = execute_single_command_on_remote(command, rem_con, logger)
         if output == False:
@@ -543,7 +600,7 @@ def do_agent_reset(command, rem_con, logger):
         elif 'Error connecting to server:: Connection refused' in output:
             timer = 30 # We will wait 30 seconds for the localconsole to become available.
             display_spinner(spinner, timer) # Wait a little longer and try again.
-            print('\r ', end="") # Erase the last spinner character and return the cursor to home.
+            print('\rDone', end="") # Erase the last spinner character and return the cursor to home.
             continue
         elif 'History file:' in output and 'Error connecting to server:: Connection refused' not in output:
             break # We successfully entered the localconsole menu. Break.
@@ -551,7 +608,7 @@ def do_agent_reset(command, rem_con, logger):
             return False
 
     while True:
-        print('\nWe are trying to get back into localconsole command line mode following an agent reset')
+        #print('\nWe are trying to get back into localconsole command line mode following an agent reset')
         command = "11\n" # Enter the command line mode in localconsole.
         output = execute_single_command_on_remote(command, rem_con, logger)
         if output == False:
@@ -565,14 +622,63 @@ def do_agent_reset(command, rem_con, logger):
                 return False
             timer = 60 # We will wait 30 seconds for the probe agent to finish its reset.
             display_spinner(spinner, timer) # Wait a little longer and try again.
-            print('\r ', end="") # Erase the last spinner character and return the cursor to home.
+            print('\r Done', end="") # Erase the last spinner character and return the cursor to home.
             continue # Wait a little longer and try again.
         else:
             return false # We did not get the expected response
 
     return True
 
-def set_probe_options_interface_specific(config_attributes_list, old_probe_configs_dict, interface_list, rem_con, logger):
+def set_probe_other_interface_specific(old_probe_configs_dict, interface_list, rem_con, logger):
+    """
+    For each monitor interface, set the probe config parameters to match the desired POC settings.
+    :interface_list: A list of probe monitor interface numbers that are available.
+    :rem_con: An instance of the remote console shell session to the probe.
+    :old_probe_configs_dict: A dictionary of all the probe configurations.
+    :return: False if any command fails, True if all commands pass.
+    """
+
+    # We should already be in the command line entry mode within the localconsole menu.
+    for interface in interface_list:
+        if old_probe_configs_dict['interface_specific'][0]['interface ' + str(interface)][0]['skt_vlan_enable'] != 'on':
+            command = 'set skt_vlan_enable ' + interface + ' on' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            # 'MICRO_SEGMENT is enabled on interface' may be returned. We won't be able to set skt_vlan_enable in this case.
+            if '%' not in output: # The response to the set skt_vlan_enable command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['interface_specific'][0]['interface ' + str(interface)][0]['span_duplicate'] != 'on':
+            command = 'set span_duplicate ' + interface + ' on' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set span_duplicate command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['interface_specific'][0]['interface ' + str(interface)][0]['ssl_sni'] != 'on':
+            command = 'set ssl_sni ' + interface + ' on' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set ssl_sni command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['interface_specific'][0]['interface ' + str(interface)][0]['community_type'] != 'ip_address':
+            command = 'set community_type ' + interface + ' ip_address' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set community_type command is not the expected '%'.
+                return False
+
+    # We need to stay in the command line mode for the next action.
+    return True
+
+
+
+def set_probe_asi_interface_specific(old_probe_configs_dict, interface_list, rem_con, logger):
     """
     For each monitor interface, set the asi config parameters to match the desired POC settings.
     :interface_list: A list of probe monitor interface numbers that are available.
@@ -583,191 +689,170 @@ def set_probe_options_interface_specific(config_attributes_list, old_probe_confi
 
     # We should already be in the command line entry mode within the localconsole menu.
     for interface in interface_list:
-        for config_attribute in config_attributes_list:
-            if config_attribute == 'kti_peak_type':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['kti_peak_type'] != 'octet':
-                    command = 'set asi ' + interface + ' kti_peak_type octet' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'kti_peak_interval':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['kti_peak_interval'] != '100000':
-                    command = 'set asi ' + interface + ' kti_peak_interval 100000' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'ksi_mtu_size':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['ksi_mtu_size'] != '1518':
-                    command = 'set asi ' + interface + ' ksi_mtu_size 1518' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'uc_conv':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['uc_conv'] != 'on':
-                    command = 'set asi ' + interface + ' uc_conv on' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'server_table':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['server_table'] != 'on':
-                    command = 'set asi ' + interface + ' server_table on' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'disc_table':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['disc_table'] != 'on':
-                    command = 'set asi ' + interface + ' disc_table on' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'vital_table':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['vital_table'] != 'on':
-                    command = 'set asi ' + interface + ' vital_table on' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'tcp_monitor':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['tcp_monitor'] != 'on':
-                    command = 'set asi ' + interface + ' tcp_monitor on' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'conv':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['conv'] != 'off':
-                    command = 'set asi ' + interface + ' conv off' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'conv ports':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['conv ports'] != 'off':
-                    command = 'set asi ' + interface + ' conv ports off' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'conv qos':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['conv qos'] != 'off':
-                    command = 'set asi ' + interface + ' conv qos off' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'la_burst':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['la_burst'] != 'on':
-                    command = 'set asi ' + interface + ' la_burst site' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'host_activity':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['host_activity'] != 'off':
-                    command = 'set asi ' + interface + ' host_activity off' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'htt':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['htt'] != 'off':
-                    command = 'set asi ' + interface + ' htt off' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'ksi 1min':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['ksi 1min'] != 'on':
-                    command = 'set asi ' + interface + ' ksi 1min on' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'ksi client_ip':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['ksi client_ip'] != 'on':
-                    command = 'set asi ' + interface + ' ksi client_ip on' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'WARNING: client_ip on will disable ASI_CONV and HOST_ACTIVITY' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'subscriber':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['subscriber'] != 'off':
-                    command = 'set asi ' + interface + ' subscriber off' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == '1-min':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['1-min'] != 'on':
-                    command = 'set asi ' + interface + ' 1-min on' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == '15-sec':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['15-sec'] != 'on':
-                    command = 'set asi ' + interface + ' 15-sec on' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
-            elif config_attribute == 'url_disc_table':
-                if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['url_disc_table'] != 'on':
-                    command = 'set asi ' + interface + ' url_disc_table on' + "\n"
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if '%' not in output: # The response to the set asi command is not the expected '%'.
-                        return False
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['kti_peak_type'] != 'octet':
+            command = 'set asi ' + interface + ' kti_peak_type octet' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['kti_peak_interval'] != '100000':
+            command = 'set asi ' + interface + ' kti_peak_interval 100000' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['ksi_mtu_size'] != '1518':
+            command = 'set asi ' + interface + ' ksi_mtu_size 1518' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['uc_conv'] != 'on':
+            command = 'set asi ' + interface + ' uc_conv on' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        # If client IP mode is on, then currently you are not allowed to have server_table on.
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['server_table'] != 'off':
+            command = 'set asi ' + interface + ' server_table off' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['disc_table'] != 'on':
+            command = 'set asi ' + interface + ' disc_table on' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['vital_table'] != 'on':
+            command = 'set asi ' + interface + ' vital_table on' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['tcp_monitor'] != 'on':
+            command = 'set asi ' + interface + ' tcp_monitor on' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['conv'] != 'off':
+            command = 'set asi ' + interface + ' conv off' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['conv ports'] != 'off':
+            command = 'set asi ' + interface + ' conv ports off' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['conv qos'] != 'off':
+            command = 'set asi ' + interface + ' conv qos off' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['la_type'] != 'site':
+            command = 'set asi ' + interface + ' la_burst site' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['host_activity'] != 'off':
+            command = 'set asi ' + interface + ' host_activity off' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['htt'] != 'off':
+            command = 'set asi ' + interface + ' htt off' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['ksi 1min'] != 'on':
+            command = 'set asi ' + interface + ' ksi 1min on' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['ksi client_ip'] != 'on':
+            command = 'set asi ' + interface + ' ksi client_ip on' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'WARNING: client_ip on will disable ASI_CONV and HOST_ACTIVITY' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['subscriber'] != 'off':
+            command = 'set asi ' + interface + ' subscriber off' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['1-min'] != 'on':
+            command = 'set asi ' + interface + ' 1-min on' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['15-sec'] != 'on':
+            command = 'set asi ' + interface + ' 15-sec on' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
+
+        if old_probe_configs_dict['asi'][0]['interface ' + str(interface)][0]['url_disc_table'] != 'on':
+            command = 'set asi ' + interface + ' url_disc_table on' + "\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if '%' not in output: # The response to the set asi command is not the expected '%'.
+                return False
 
     return True
 
-def set_probe_options_per_interface(config_attributes_list, old_probe_configs_dict, interface_list, rem_con, logger):
+def set_probe_options_per_interface(old_probe_configs_dict, interface_list, rem_con, logger):
     """
     For each monitor interface, set the interface options config parameters to match the desired POC settings.
     :interface_list: A list of probe monitor interface numbers that are available.
@@ -778,7 +863,6 @@ def set_probe_options_per_interface(config_attributes_list, old_probe_configs_di
 
     command = "quit\n" # Exit the command line menu to the main menu
     output = execute_single_command_on_remote(command, rem_con, logger)
-    #print(f'\noutput is: {output}')
     if output == False:
         return False
     if 'Probe IP V4 address' not in output: # We did not enter the localconsole menu correctly.
@@ -786,162 +870,146 @@ def set_probe_options_per_interface(config_attributes_list, old_probe_configs_di
 
     command = "7\n" # We need to get to the list of interfaces menu.
     output = execute_single_command_on_remote(command, rem_con, logger) # Send option 7 to the localconsole menu.
-    #print(f'\noutput is: {output}')
     if output == False:
         return False
     if 'Select Interface :' not in output: # We did not enter the interface menu correctly.
         return False
 
     for interface in interface_list:
+        print(f'interface is: {interface}')
         command = str(interface + '\n') # Select the interface to configure by sending the interface number.
         output = execute_single_command_on_remote(command, rem_con, logger) # Send option 7 to the localconsole menu.
-        #print(f'\noutput is: {output}')
         if output == False:
             return False
         if 'Interface Options Menu:' not in output: # We did not enter the interface options menu correctly.
             return False
-        for config_attribute in config_attributes_list:
 
-            if config_attribute == 'power_alarm_util':
-                if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['power_alarm_util'] != 'off':
-                    command = "2\n" # Toggle the power_alarm_util setting.
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'Interface Options Menu:' not in output:
-                        return False
-            elif config_attribute == 'power_alarm_resp':
-                if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['power_alarm_resp'] != 'off':
-                    command = "3\n" # Toggle the power_alarm_resp setting.
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'Interface Options Menu:' not in output:
-                        return False
-            elif config_attribute == 'admin_shutdown':
-                if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['admin_shutdown'] != 'off':
-                    command = "5\n" # Toggle the admin_shutdown setting.
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'Interface Options Menu:' not in output:
-                        return False
-            elif config_attribute == 'Data w/o Control Tcm':
-                if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['Data w/o Control Tcm'] != 'off':
-                    command = "10\n" # Toggle the Data w/o Control Tcm setting.
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'Interface Options Menu:' not in output:
-                        return False
-            elif config_attribute == 'vifn_enable':
-                if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['vifn_enable'] != 'on':
-                    command = "34\n" # Toggle the vifn_enable setting.
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'Interface Options Menu:' not in output:
-                        return False
-            elif config_attribute == 'vifn_mode':
-                if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['vifn_mode'] != 'vlan-site-qos':
-                    command = "36\n" # Enter the vifn_mode menu.
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'Select vifn_mode:' not in output:
-                        return False
-                    command = "38\n" # Enter the vlan-site-qos as the vifn_mode.
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'Interface Options Menu:' not in output: # localconsole returns us to the interface options menu.
-                        return False
-            elif config_attribute == 'HTTP Mode':
-                if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['HTTP Mode'] != 'Monitor URL Only':
-                    command = "45\n" # Enter the HTTP Mode menu.
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'Select HTTP Mode:' not in output:
-                        return False
-                    command = "1\n" # Select Monitor URL Only.
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'Interface Options Menu:' not in output:
-                        return False
-            elif config_attribute == 'M3UA Table':
-                if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['M3UA Table'] != 'off':
-                    command = "52\n" # Toggle the M3UA Table setting.
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'Interface Options Menu:' not in output:
-                        return False
-            elif config_attribute == 'enable xDR':
-                if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['enable xDR'] != 'on':
-                    command = "53\n" # Toggle the enable xDR setting.
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'Interface Options Menu:' not in output:
-                        return False
-            elif config_attribute == 'Tunnel Parsing':
-                if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['Tunnel Parsing'] != 'off':
-                    command = "54\n" # Toggle the Tunnel Parsing setting.
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'Interface Options Menu:' not in output:
-                        return False
-            elif config_attribute == 'interface type':
-                if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['interface type'] != 'Enterprise':
-                    command = "55\n" # Enter the interface type menu.
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'Select interface type:' not in output:
-                        return False
-                    command = "1\n" # Select Enterprise type.
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'Interface Options Menu:' not in output:
-                        return False
-            elif config_attribute == 'Data w/o Control':
-                if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['Data w/o Control'] != 'off':
-                    command = "54\n" # Toggle the Data w/o Control setting.
-                    output = execute_single_command_on_remote(command, rem_con, logger)
-                    #print(f'\noutput is: {output}')
-                    if output == False:
-                        return False
-                    if 'Interface Options Menu:' not in output:
-                        return False
+        if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['power_alarm_util'] != 'off':
+            command = "2\n" # Toggle the power_alarm_util setting.
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Interface Options Menu:' not in output:
+                return False
+
+        if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['power_alarm_resp'] != 'off':
+            command = "3\n" # Toggle the power_alarm_resp setting.
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Interface Options Menu:' not in output:
+                return False
+
+        if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['admin_shutdown'] != 'off':
+            command = "5\n" # Toggle the admin_shutdown setting.
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Interface Options Menu:' not in output:
+                return False
+
+        if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['Data w/o Control Tcm'] != 'off':
+            command = "10\n" # Toggle the Data w/o Control Tcm setting.
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Interface Options Menu:' not in output:
+                return False
+
+        if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['vifn_enable'] != 'on':
+            command = "34\n" # Toggle the vifn_enable setting.
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Interface Options Menu:' not in output:
+                return False
+
+        if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['vifn_mode'] != 'vlan-site-qos':
+            command = "36\n" # Enter the vifn_mode menu.
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Select vifn_mode:' not in output:
+                return False
+            command = "38\n" # Enter the vlan-site-qos as the vifn_mode.
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Interface Options Menu:' not in output: # localconsole returns us to the interface options menu.
+                return False
+
+        if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['HTTP Mode'] != 'Monitor URL Only':
+            command = "45\n" # Enter the HTTP Mode menu.
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Select HTTP Mode:' not in output:
+                return False
+            command = "1\n" # Select Monitor URL Only.
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Interface Options Menu:' not in output:
+                return False
+
+        if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['M3UA Table'] != 'off':
+            command = "52\n" # Toggle the M3UA Table setting.
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Interface Options Menu:' not in output:
+                return False
+
+        if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['enable xDR'] != 'on':
+            command = "53\n" # Toggle the enable xDR setting.
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Interface Options Menu:' not in output:
+                return False
+
+        if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['Tunnel Parsing'] != 'off':
+            command = "54\n" # Toggle the Tunnel Parsing setting.
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Interface Options Menu:' not in output:
+                return False
+
+        if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['interface type'] != 'Enterprise':
+            command = "55\n" # Enter the interface type menu.
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Select interface type:' not in output:
+                return False
+            command = "1\n" # Select Enterprise type.
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Interface Options Menu:' not in output:
+                return False
+
+        if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['Data w/o Control'] != 'off':
+            command = "54\n" # Toggle the Data w/o Control setting.
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                print('54 output is false')
+                return False
+            if 'Interface Options Menu:' not in output:
+                print(" 54 'Interface Options Menu:' not in output:")
+                return False
         command = "99\n" # We need to get back to the list of interfaces menu.
         output = execute_single_command_on_remote(command, rem_con, logger) # Send option 7 to the localconsole menu.
-        #print(f'\noutput is: {output}')
         if output == False:
+            print('99 output is false')
             return False
         if 'Select Interface :' not in output: # We did not enter the interface list menu correctly.
+            print(" 99 'Interface Options Menu:' not in output:")
             return False
 
     command = "99\n" # Exit the interfaces list menu back up to the main menu
     output = execute_single_command_on_remote(command, rem_con, logger)
-    #print(f'\noutput is: {output}')
     if output == False:
         return False
     if 'Probe IP V4 address' not in output: # We did not enter the localconsole menu correctly.
@@ -965,12 +1033,17 @@ def set_probe_options_non_interface_specific(old_probe_configs_dict, rem_con, lo
     """
 
     reset_agent_command = ''
-    if old_probe_configs_dict['non_interface_specific'][0]['vq payload'] != 'on':
+    if old_probe_configs_dict['non_interface_specific'][0]['vq payload'] == 'on, but not enough resources available':
+        command = "set vq payload off\n"
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+    elif old_probe_configs_dict['non_interface_specific'][0]['vq payload'] != 'on':
         command = "set vq payload on\n"
         output = execute_single_command_on_remote(command, rem_con, logger)
         if output == False:
             return False
-        if 'vq payload will be updated on next reset' not in output:
+        if 'vq payload will be updated on next reset' not in output or '%' not in output:
             return False
         reset_agent_command = 'do reset\n' # Not a prompt to reset agent, so we will do it after table size allocation.
 
@@ -1009,26 +1082,26 @@ def set_probe_options_non_interface_specific(old_probe_configs_dict, rem_con, lo
         if output == False:
             return False
 
-    #command = "set tsa auto\n"
-    #output = execute_single_command_on_remote(command, rem_con, logger)
-    #if output == False:
-        #return False
-    #if "A commit and reset will be required before this setting takes effect" not in output:
-        #return False
-    #command = "set tsa commit\n"
-    #output = execute_single_command_on_remote(command, rem_con, logger)
-    #if output == False:
-        #return False
-    #if "Committed new table sizes" not in output:
-        #return False
-    #reset_agent_command = 'y\n' # In this case you are prompted to reset the agent before coninuing.
-    #reset_status = do_agent_reset(reset_agent_command, rem_con, logger)
-    #if output == False:
-        #return False
+    command = "set tsa auto\n"
+    output = execute_single_command_on_remote(command, rem_con, logger)
+    if output == False:
+        return False
+    if "A commit and reset will be required before this setting takes effect" not in output:
+        return False
+    command = "set tsa commit\n"
+    output = execute_single_command_on_remote(command, rem_con, logger)
+    if output == False:
+        return False
+    if "Committed new table sizes" not in output:
+        return False
+    reset_agent_command = 'y\n' # In this case you are prompted to reset the agent before coninuing.
+    reset_status = do_agent_reset(reset_agent_command, rem_con, logger)
+    if output == False:
+        return False
 
     return True
 
-def set_probe_software_options(config_attributes_list, old_probe_configs_dict, rem_con, logger):
+def set_probe_software_options(old_probe_configs_dict, rem_con, logger):
     """
     Set the probe software options settings.
     :rem_con: An instance of the remote console shell session to the probe.
@@ -1051,16 +1124,16 @@ def set_probe_software_options(config_attributes_list, old_probe_configs_dict, r
         if 'Software Options Menu:' not in output:
             return False
 
-    if old_probe_configs_dict['software_options'][0]['NL and AL Host'] != 'on':
-        command = "3\n" # Toggle the NL and AL Host setting
+    if old_probe_configs_dict['software_options'][0]['NL and AL Host'] != 'off':
+        command = "3\n" # Toggle the NL and AL Host setting as this in not applicable to ASI mode
         output = execute_single_command_on_remote(command, rem_con, logger)
         if output == False:
             return False
         if 'Software Options Menu:' not in output:
             return False
 
-    if old_probe_configs_dict['software_options'][0]['NL and AL Conversation'] != 'on':
-        command = "4\n" # Toggle the NL and AL Conversation setting
+    if old_probe_configs_dict['software_options'][0]['NL and AL Conversation'] != 'off':
+        command = "4\n" # Toggle the NL and AL Conversation setting s this in not applicable to ASI mode
         output = execute_single_command_on_remote(command, rem_con, logger)
         if output == False:
             return False
@@ -1084,7 +1157,7 @@ def set_probe_software_options(config_attributes_list, old_probe_configs_dict, r
 
     return True
 
-def set_probe_protocol_options(config_attributes_list, old_probe_configs_dict, rem_con, logger):
+def set_probe_protocol_options(old_probe_configs_dict, rem_con, logger):
     """
     Set the probe protocol options settings.
     :rem_con: An instance of the remote console shell session to the probe.
@@ -1156,18 +1229,13 @@ def set_probe_protocol_options(config_attributes_list, old_probe_configs_dict, r
 
     return True
 
-def set_probe_http_options(config_attributes_list, old_probe_configs_dict, rem_con, logger):
+def set_probe_http_options(old_probe_configs_dict, rem_con, logger):
     """
     Set the probe protocol options settings.
     :rem_con: An instance of the remote console shell session to the probe.
     :old_probe_configs_dict: A dictionary of all the probe configurations.
     :return: False if any command fails, True if all commands pass.
     """
-
-config_attributes_list = ['http web_classify', 'http db_type', 'http proxy_server_uri_search', 'http hsts',
-                        'http my_nw_url_discovery', 'http parse_xcap', 'http parse_stir', 'http ssl_quic_subscr_info',
-                        'http use_xff', 'http use_xff_multiple_clients', 'http use_client_ip_field',
-                        'http use_x_true_client_ip', 'http use_x_real_ip_field']
 
     command = "11\n" # Enter the command line mode in localconsole.
     output = execute_single_command_on_remote(command, rem_con, logger)
@@ -1181,9 +1249,154 @@ config_attributes_list = ['http web_classify', 'http db_type', 'http proxy_serve
         output = execute_single_command_on_remote(command, rem_con, logger)
         if output == False:
             return False
-        if '%:' not in output:
+        if '%' not in output: # I am expecting the command line prompt to be returned.
             return False
 
+    if old_probe_configs_dict['http'][0]['http db_type'] != 'full':
+        command = "set http db_type full\n" # Change the http db_type setting
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+        if '%' not in output: # I am expecting the command line prompt to be returned.
+            return False
+
+    if old_probe_configs_dict['http'][0]['http proxy_server_uri_search'] != 'off':
+        command = "set http proxy_server_uri_search off\n" # Change the http proxy_server_uri_search setting
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+        if '%' not in output: # I am expecting the command line prompt to be returned.
+            return False
+
+    if old_probe_configs_dict['http'][0]['http hsts'] != 'off':
+        command = "set http hsts off\n" # Change the http hsts setting
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+        if '%' not in output: # I am expecting the command line prompt to be returned.
+            return False
+
+    if old_probe_configs_dict['http'][0]['http my_nw_url_discovery'] != 'on':
+        command = "set http my_nw_url_discovery on\n" # Change the http my_nw_url_discovery setting
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+        if '%' not in output: # I am expecting the command line prompt to be returned.
+            return False
+
+    if old_probe_configs_dict['http'][0]['http parse_xcap'] != 'off':
+        command = "set http parse_xcap off\n" # Change the http parse_xcap setting
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+        if '%' not in output: # I am expecting the command line prompt to be returned.
+            return False
+
+    if old_probe_configs_dict['http'][0]['http parse_stir'] != 'off':
+        command = "set http parse_stir off\n" # Change the http parse_stir setting
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+        if '%' not in output: # I am expecting the command line prompt to be returned.
+            return False
+
+    if old_probe_configs_dict['http'][0]['http ssl_quic_subscr_info'] != 'off':
+        command = "set http ssl_quic_subscr_info off\n" # Change the http ssl_quic_subscr_info setting
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+        if '%' not in output: # I am expecting the command line prompt to be returned.
+            return False
+
+    if old_probe_configs_dict['http'][0]['http use_xff'] != 'off':
+        command = "set http use_xff off\n" # Change the http use_xff setting
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+        if '%' not in output: # I am expecting the command line prompt to be returned.
+            return False
+
+    if old_probe_configs_dict['http'][0]['http use_xff_multiple_clients'] != 'off':
+        command = "set http use_xff_multiple_clients off\n" # Change the http use_xff_multiple_clients setting
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+        if '%' not in output: # I am expecting the command line prompt to be returned.
+            return False
+
+    if old_probe_configs_dict['http'][0]['http use_client_ip_field'] != 'off':
+        command = "set http use_client_ip_field off\n" # Change the http use_client_ip_field setting
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+        if '%' not in output: # I am expecting the command line prompt to be returned.
+            return False
+
+    if old_probe_configs_dict['http'][0]['http use_x_true_client_ip'] != 'off':
+        command = "set http use_x_true_client_ip off\n" # Change the http use_x_true_client_ip setting
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+        if '%' not in output: # I am expecting the command line prompt to be returned.
+            return False
+
+    if old_probe_configs_dict['http'][0]['http use_x_real_ip_field'] != 'off':
+        command = "set http use_x_real_ip_field off\n" # Change the http use_x_real_ip_field setting
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+        if '%' not in output: # I am expecting the command line prompt to be returned.
+            return False
+
+    # Stay in the command line mode for the next function.
+
+    return True
+
+def set_probe_security_options(old_probe_configs_dict, rem_con, logger):
+    """
+    Set the probe security options settings.
+    :rem_con: An instance of the remote console shell session to the probe.
+    :old_probe_configs_dict: A dictionary of all the probe configurations.
+    :return: False if any command fails, True if all commands pass.
+    """
+
+    command = "quit\n" # We need to exit the command line.
+    output = execute_single_command_on_remote(command, rem_con, logger) # Send option 15 to the localconsole menu.
+    #print(output)
+    if output == False:
+        return False
+    if 'Probe IP V4 address' not in output: # We did not enter the interface menu correctly.
+        return False
+
+    command = "13\n" # We need to get into the security options menu.
+    output = execute_single_command_on_remote(command, rem_con, logger) # Send option 15 to the localconsole menu.
+    #print(output)
+    if output == False:
+        return False
+    if 'Secure Access Menu:' not in output: # We did not enter the interface menu correctly.
+        return False
+
+    if old_probe_configs_dict['security_options'][0]['capture_slice_size'] != '10240':
+        command = "3\n" # Modify the capture slice size to match 10240.
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+        if 'Enter new slice size :' not in output:
+            return False
+        command = "10240\n" # Toggle the Pattern Matching setting
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+        if 'Secure Access Menu:' not in output:
+            return False
+
+    if old_probe_configs_dict['security_options'][0]['data_capture'] != 'on':
+        command = "4\n" # Toggle the data capture setting
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            return False
+        if 'Secure Access Menu:' not in output:
+            return False
 
     command = "99\n" # Return to the main menu
     output = execute_single_command_on_remote(command, rem_con, logger)
@@ -1194,8 +1407,7 @@ config_attributes_list = ['http web_classify', 'http db_type', 'http proxy_serve
 
     return True
 
-
-def set_probe_agent_options(config_attributes_list, old_probe_configs_dict, rem_con, logger):
+def set_probe_agent_options(old_probe_configs_dict, rem_con, logger):
     """
     Set the probe agent (not related to interfaces) specific settings.
     :rem_con: An instance of the remote console shell session to the probe.
@@ -1241,6 +1453,16 @@ def set_probe_agent_options(config_attributes_list, old_probe_configs_dict, rem_
         if 'Agent Options Menu:' not in output:
             return False
 
+    # vStreams do not have the next setting, so skip it if it if the model number is vStream.
+    if old_probe_configs_dict['agent_configs'][0]['model_number'] != 'vSTREAM':
+        if old_probe_configs_dict['agent_options'][0]['Infinistream Console Support'] != 'on':
+            command = "11\n" # Toggle the Infinistream Eth0 GRE Monitoring setting
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Agent Options Menu:' not in output:
+                return False
+
     if old_probe_configs_dict['agent_options'][0]['nGeniusONE Managed'] != 'on':
         command = "14\n" # Toggle the Infinistream nGeniusONE Managed setting
         output = execute_single_command_on_remote(command, rem_con, logger)
@@ -1257,13 +1479,15 @@ def set_probe_agent_options(config_attributes_list, old_probe_configs_dict, rem_
         if 'Agent Options Menu:' not in output:
             return False
 
-    if old_probe_configs_dict['agent_options'][0]['Eth0 GRE Monitoring'] != 'off':
-        command = "19\n" # Toggle the Infinistream Eth0 GRE Monitoring setting
-        output = execute_single_command_on_remote(command, rem_con, logger)
-        if output == False:
-            return False
-        if 'Agent Options Menu:' not in output:
-            return False
+    # vStreams do not have the next setting, so skip it if it if the model number is vStream.
+    if old_probe_configs_dict['agent_configs'][0]['model_number'] != 'vSTREAM':
+        if old_probe_configs_dict['agent_options'][0]['Eth0 GRE Monitoring'] != 'off':
+            command = "19\n" # Toggle the Infinistream Eth0 GRE Monitoring setting
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                return False
+            if 'Agent Options Menu:' not in output:
+                return False
 
     command = "99\n" # Return to the main menu
     output = execute_single_command_on_remote(command, rem_con, logger)
@@ -1310,54 +1534,43 @@ def set_probe_configs(old_probe_configs_dict, interface_list, rem_con, logger):
     if set_status == False: # A set operation has failed. Return False.
         return False
 
-    config_attributes_list = ['power_alarm_util', 'power_alarm_resp', 'admin_shutdown', 'Data w/o Control Tcm',
-                            'jumboframe_support', 'interface_speed', 'mib2_ifspeed', 'vifn_enable',
-                            'vifn_discovery', 'vifn_mode', 'reverse_ports', 'HTTP Mode', 'M3UA Table',
-                            'enable xDR', 'Tunnel Parsing', 'interface type', 'auxiliary interfaces', 'Data w/o Control',
-                            'Interface Mode', 'Configure Tunnel Termination']
-    print('\rSetting interface options configs...', end="")
-    set_status = set_probe_options_per_interface(config_attributes_list, old_probe_configs_dict, interface_list, rem_con, logger)
+    print('\rSetting interface options...', end="")
+    set_status = set_probe_options_per_interface(old_probe_configs_dict, interface_list, rem_con, logger)
     if set_status == False: # A set operation has failed. Return False.
         return False
 
-    config_attributes_list = ['kti_peak_type', 'kti_peak_interval', 'ksi_mtu_size', 'uc_conv',
-                            'server_table', 'disc_table', 'vital_table', 'tcp_monitor', 'conv',
-                            'conv ports', 'conv qos', 'la_burst', 'la_type', 'host_activity',
-                            'htt', 'ksi 1min', 'ksi client_ip', 'subscriber', '1-min', '15-sec',
-                            'url_disc_table']
     print('\rSetting ASI configs...', end="")
-    set_status = set_probe_options_interface_specific(config_attributes_list, old_probe_configs_dict, interface_list, rem_con, logger)
+    set_status = set_probe_asi_interface_specific(old_probe_configs_dict, interface_list, rem_con, logger)
     if set_status == False: # A set operation has failed. Return False.
         return False
 
-    config_attributes_list = ['watchdog', 'auto_reboot', 'timestamp_ns', 'burst_advisor_peak',
-                            'Infinistream Console Support', 'Traffic Violations', 'nGeniusONE Managed',
-                            'Health Monitoring', 'Eth0 GRE Monitoring', 'Network Analyzer Support']
     print('\rSetting probe agent options...', end="")
-    set_status = set_probe_agent_options(config_attributes_list, old_probe_configs_dict, rem_con, logger)
+    set_status = set_probe_agent_options(old_probe_configs_dict, rem_con, logger)
     if set_status == False: # A set operation has failed. Return False.
         return False
 
-    config_attributes_list = ['Response Time Monitor', 'NL and AL Host', 'NL and AL Conversation',
-                            'SBA Priority']
     print('\rSetting probe software options...', end="")
-    set_status = set_probe_software_options(config_attributes_list, old_probe_configs_dict, rem_con, logger)
+    set_status = set_probe_software_options(old_probe_configs_dict, rem_con, logger)
     if set_status == False: # A set operation has failed. Return False.
         return False
 
-    config_attributes_list = ['Pattern Matching', 'CORBA', 'Conversation Port Discovery',
-                            'Skype Pattern Matching', 'Extended FIS', 'Voice and Video Quality']
     print('\rSetting probe protocol options...', end="")
-    set_status = set_probe_protocol_options(config_attributes_list, old_probe_configs_dict, rem_con, logger)
+    set_status = set_probe_protocol_options(old_probe_configs_dict, rem_con, logger)
     if set_status == False: # A set operation has failed. Return False.
         return False
 
-    config_attributes_list = ['http web_classify', 'http db_type', 'http proxy_server_uri_search', 'http hsts',
-                            'http my_nw_url_discovery', 'http parse_xcap', 'http parse_stir', 'http ssl_quic_subscr_info',
-                            'http use_xff', 'http use_xff_multiple_clients', 'http use_client_ip_field',
-                            'http use_x_true_client_ip', 'http use_x_real_ip_field']
     print('\rSetting probe http options...', end="")
-    set_status = set_probe_http_options(config_attributes_list, old_probe_configs_dict, rem_con, logger)
+    set_status = set_probe_http_options(old_probe_configs_dict, rem_con, logger)
+    if set_status == False: # A set operation has failed. Return False.
+        return False
+
+    print('\rSetting other interface specific configs...', end="")
+    set_status = set_probe_other_interface_specific(old_probe_configs_dict, interface_list, rem_con, logger)
+    if set_status == False: # A set operation has failed. Return False.
+        return False
+
+    print('\rSetting probe security options...', end="")
+    set_status = set_probe_security_options(old_probe_configs_dict, rem_con, logger)
     if set_status == False: # A set operation has failed. Return False.
         return False
 
@@ -1390,7 +1603,7 @@ def gather_probe_configs(logger, rem_con):
     # Initialize an empty dictionary to hold our probe config params.
     old_probe_configs_dict = {'interface_options': [{}], 'agent_configs': [{}], 'agent_options': [{}], 'software_options': [{}],
                             'protocol_options': [{}], 'http': [{}], 'asi': [{}], 'interface_specific': [{}],
-                            'non_interface_specific': [{}]}
+                            'non_interface_specific': [{}], 'security_options': [{}]}
 
     command = "localconsole\n"
     output = execute_single_command_on_remote(command, rem_con, logger)
@@ -1526,11 +1739,12 @@ def gather_probe_configs(logger, rem_con):
     # Get each probe interface specific settings for each interface one-by-one and add them to the old_probe_configs_dict.
     old_probe_configs_dict = get_probe_options_single_command_multi_interface(config_attributes_list, interface_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger)
 
-    command = "quit\n"
-    output = execute_single_command_on_remote(command, rem_con, logger)
-    if output == False:
-        print('Exiting...')
-        sys.exit()
+    config_attributes_list = ['capture_slice_size', 'data_capture']
+    index_counter = 11 # The starting index of the first valid element in the formatted configs returned by the probe.
+    print("\r                                             ", end='') # Clear the progress print line before we return.
+    print('\rGetting Security Options...', end="")
+    # Get each probe interface specific settings for each interface one-by-one and add them to the old_probe_configs_dict.
+    old_probe_configs_dict = get_probe_security_options(config_attributes_list, index_counter, rem_con, old_probe_configs_dict, logger)
 
     command = "exit\n"
     output = execute_single_command_on_remote(command, rem_con, logger)
@@ -1620,7 +1834,12 @@ def main():
 
     # Hardcoding the filenames for encrypted credentials and the key file needed to decrypt the credentials.
     cred_filename = 'ProbeCredFile.ini'
-    probekey_file = 'probekey.key'
+    os_type = sys.platform
+    if os_type == 'linux':
+        probekey_file = '.probekey.key' # hide the probekey file if Linux.
+    else:
+        probekey_file = 'probekey.key' # don't hide it if Windows.
+
     # Create a logger instance and write the date_time to a log file.
     logger = create_logging_function(log_filename)
     if logger == False: # Creating the logger instance has failed. Exit.
@@ -1686,6 +1905,8 @@ def main():
         print('Exiting...')
         sys.exit()
 
+    print('\nAll probe configurations were successfully applied.')
+
     # Close the SSH session to the probe.
     close_status = close_ssh_session(user_creds, client, rem_con, logger)
     if close_status == False: # Closing the SSH session to the probe has failed. Exit.
@@ -1693,6 +1914,7 @@ def main():
         sys.exit()
     else:
         # We are done. Exit anyway.
+        print('\nConnection closed, program execution finished')
         sys.exit()
 
 if __name__ == "__main__":
