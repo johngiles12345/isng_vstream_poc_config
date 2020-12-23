@@ -110,8 +110,8 @@ def create_logging_function():
         # Write the current date and time to the log file to at least show when the program was executed.
         logger.info(f"*** Start of logs {date_time} ***")
         return logger, log_filename
-    except:
-        print(f"[CRITICAL] Unable to create log file function for: {log_filename}")
+    except Exception:
+        logger.exception(f"Fatal error: Unable to create log file function for: {log_filename}")
         return False
 
 def get_decrypted_credentials(cred_filename, probekey_file, logger):
@@ -145,8 +145,8 @@ def get_decrypted_credentials(cred_filename, probekey_file, logger):
                     with open(probekey_file, 'r') as probekey_in:
                         probekey = probekey_in.read().encode()
                         fng1 = Fernet(probekey)
-                except:
-                    logger.critical(f'[CRITICAL] Unable to open probekey_file: {probekey_file}')
+                except Exception:
+                    logger.exception(f"Fatal error: Unable to open probekey_file: {probekey_file}")
                     return False
                 user_creds.use_ssh_keyfile = False
                 user_creds.probeusername = lines[3].partition('=')[2].rstrip("\n")
@@ -154,8 +154,8 @@ def get_decrypted_credentials(cred_filename, probekey_file, logger):
                 user_creds.probepassword_pl = fng1.decrypt(user_creds.probepassword.encode()).decode()
             user_creds.probehostname = lines[5].partition('=')[2].rstrip("\n")
             user_creds.probePort = lines[6].partition('=')[2].rstrip("\n")
-    except:
-        logger.critical(f'[CRITICAL] Unable to open cred_filename: {cred_filename}')
+    except Exception:
+        logger.exception(f"Fatal error: Unable to open cred_filename: {cred_filename}")
         return False
     return user_creds
 
@@ -193,8 +193,8 @@ def open_ssh_session(user_creds, logger):
         logger.info(f'[INFO] Open SSH connection to: {hostname} Successful')
         #client.connect(hostname,username,pkey=none,key_filename='id_rsa',look_for_keys=True)
         return client
-    except:
-        logger.critical(f'[CRITICAL] Unable to open SSH connection to: {hostname}')
+    except Exception:
+        logger.exception(f"Fatal error: Unable to open SSH connection to: {hostname}")
         return False
 
 def execute_single_command_on_remote(command, rem_con, logger):
@@ -216,8 +216,8 @@ def execute_single_command_on_remote(command, rem_con, logger):
         time.sleep(2)
         output = rem_con.recv(2048) # Pull down the receive buffer from the remote console to a limit of 2048 bytes.
         output = output.decode("utf-8") # Output comes back as a file-like binary object. Decode to a string.
-    except:
-        logger.error(f'[ERROR] Execute single command: {command} over the SSH shell has failed')
+    except Exception:
+        logger.exception(f"Fatal error: Execute single command: {command} over the SSH shell has failed")
         return False
     return output
 
@@ -241,8 +241,8 @@ def init_probe_console(logger, client):
         if 'Last login:' not in output:
             logger.error("[ERROR] SSH command invoke_shell has failed. 'Last login' missing from output")
             return False
-    except:
-        logger.critical('[CRITICAL] SSH command invoke_shell has failed')
+    except Exception:
+        logger.exception(f"Fatal error: SSH command invoke_shell has failed")
         return False
 
     command = "sudo su -\n"
@@ -298,8 +298,8 @@ def get_probe_options(config_attributes_list, index_counter, rem_con, old_probe_
             else:
                 old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_configs[index_counter].partition(config_attribute + ' ')[2]
             index_counter += 1
-    except:
-        logger.error(f'[ERROR] get_probe_options, get agent_configs has failed')
+    except Exception:
+        logger.exception(f"Fatal error: get {options_type} has failed")
         return False
 
     return old_probe_configs_dict
@@ -359,8 +359,8 @@ def get_probe_options_interface_specific(config_attributes_list, interface_list,
                         old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'on'
                     else:
                         old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'off'
-    except:
-        logger.error(f'[ERROR] get_probe_options_interface_specific, Get config attribute for an interface has failed')
+    except Exception:
+        logger.exception(f"Fatal error: get_probe_options_interface_specific, Get config attribute for an interface has failed")
         return False
 
     return old_probe_configs_dict
@@ -443,8 +443,8 @@ def get_probe_options_per_interface(config_attributes_list, interface_list, inde
             if output == False:
                 logger.error(f'[ERROR] get_probe_options_per_interface, Console command: {command} failed')
                 return False
-    except:
-        logger.error(f'[ERROR] get_probe_options_per_interface, Getting probe options for an interface has failed')
+    except Exception:
+        logger.exception(f"Fatal error: get_probe_options_per_interface, Getting probe options for an interface has failed")
         return False
 
     return old_probe_configs_dict
@@ -489,8 +489,8 @@ def get_probe_options_non_interface_specific(config_attributes_list, index_count
                 config_attribute_verbose = formatted_options_configs[index_counter].partition('asi_mode is currently set to ')[2].lower()
             #print(f'\nconfig_attribute_verbose is: {config_attribute_verbose}')
             old_probe_configs_dict[options_type][0][config_attribute] = config_attribute_verbose
-    except:
-        logger.error(f'[ERROR] get_probe_options_non_interface_specific, Getting probe options has failed')
+    except Exception:
+        logger.exception(f"Fatal error: get_probe_options_non_interface_specific, Getting probe options has failed")
         return False
 
     return old_probe_configs_dict
@@ -527,8 +527,8 @@ def get_probe_options_single_command_multi_interface(config_attributes_list, int
             for interface in interface_list: # In this case, loop through each line returned for each interface.
                 old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_configs[loop_counter].partition(interface + ' ')[2]
                 loop_counter += 1 # Increment the formatted_options_configs index number we use for each config_attribute loop.
-    except:
-        logger.error(f'[ERROR] get_probe_options_single_command_multi_interface, Get config attribute for multi-interface failed')
+    except Exception:
+        logger.exception(f"Fatal error: get_probe_options_single_command_multi_interface, Get config attribute for multi-interface failed")
         return False
     return old_probe_configs_dict
 
@@ -577,8 +577,8 @@ def get_probe_security_options(config_attributes_list, index_counter, rem_con, o
                 #print(f"formatted_options_configs[loop_counter].partition('Toggle data capture : ')[2] is: {formatted_options_configs[loop_counter].partition('Toggle data capture : ')[2]}")
                 old_probe_configs_dict['security_options'][0][config_attribute] = formatted_options_configs[loop_counter].partition('Toggle data capture : ')[2].lower()
             loop_counter += 1
-    except:
-        logger.error(f'[ERROR] get_probe_security_options, Getting the Security Options menu failed')
+    except Exception:
+        logger.exception(f"Fatal error: get_probe_security_options, Getting the Security Options menu failed")
         return False
 
     return old_probe_configs_dict
@@ -662,8 +662,8 @@ def do_agent_reset(command, rem_con, logger):
             else:
                 logger.error(f'[ERROR] do_agent_reset, Console command: {command} has Unexpected output: {output}')
                 return False
-    except:
-        logger.error(f'[ERROR] do_agent_reset, An error occurred while attempting to reset the agent')
+    except Exception:
+        logger.exception(f"Fatal error: do_agent_reset, An error occurred while attempting to reset the agent")
         return False
 
     return True
@@ -719,8 +719,8 @@ def set_probe_other_interface_specific(old_probe_configs_dict, interface_list, r
                 if '%' not in output: # The response to the set community_type command is not the expected '%'.
                     logger.error(f'[ERROR] set_probe_other_interface_specific, Console command: {command} has Unexpected output: {output}')
                     return False
-    except:
-        logger.error(f'[ERROR] set_probe_other_interface_specific, An error has occurred in set probe other')
+    except Exception:
+        logger.exception(f"Fatal error: set_probe_other_interface_specific, An error has occurred in set probe other")
         return False
     # We need to stay in the command line mode for the next action.
     return True
@@ -943,8 +943,8 @@ def set_probe_asi_interface_specific(old_probe_configs_dict, interface_list, rem
                 if '%' not in output: # The response to the set asi command is not the expected '%'.
                     logger.error(f'[ERROR] set_probe_asi_interface_specific, Console command: {command} has Unexpected output: {output}')
                     return False
-    except:
-        logger.error(f'[ERROR] set_probe_asi_interface_specific, An error has occurred while setting ASI probe configurations')
+    except Exception:
+        logger.exception(f"Fatal error: set_probe_asi_interface_specific, An error has occurred while setting ASI probe configurations")
         return False
     return True
 
@@ -957,6 +957,7 @@ def set_probe_options_per_interface(old_probe_configs_dict, interface_list, rem_
     :return: False if any command fails, True if all commands pass.
     """
 
+    enterprise_set_flag = 0 # If you change to enterprise mode, you have to reset the agent again.
     try:
         command = "quit\n" # Exit the command line menu to the main menu
         output = execute_single_command_on_remote(command, rem_con, logger)
@@ -1120,6 +1121,7 @@ def set_probe_options_per_interface(old_probe_configs_dict, interface_list, rem_
                 if 'Interface Options Menu:' not in output:
                     logger.error(f'[ERROR] set_probe_options_per_interface, Console command: {command} has Unexpected output: {output}')
                     return False
+                enterprise_set_flag = 1 # If you change to enterprise mode, you have to reset the agent again.
 
             if old_probe_configs_dict['interface_options'][0]['interface ' + str(interface)][0]['Data w/o Control'] != 'off':
                 command = "54\n" # Toggle the Data w/o Control setting.
@@ -1156,8 +1158,17 @@ def set_probe_options_per_interface(old_probe_configs_dict, interface_list, rem_
         if 'Enter "quit" to exit command-line mode' not in output: # We did not enter command line mode.
             logger.error(f'[ERROR] set_probe_options_per_interface, Console command: {command} has Unexpected output: {output}')
             return False
-    except:
-        logger.error(f'[ERROR] set_probe_options_per_interface, An error has occurred while setting probe options per interface')
+
+        if enterprise_set_flag == 1: # A change of interface type to enterprise mode occurred. We need to reset agent.
+            reset_agent_command = 'do reset\n' # Respond to the confirmation prompt with a 'y'.
+            print(f"\nOne or more modifications to interface type 'Enterprise' requires a probe agent reset again, please wait...", end='')
+            logger.info(f"\nOne or more modifications to interface type 'Enterprise' requires an additional probe agent reset")
+            reset_status = do_agent_reset(reset_agent_command, rem_con, logger)
+            if output == False:
+                logger.error(f'[ERROR] Unable to reset agent following a change of interface type to Enterprise')
+                return False
+    except Exception:
+        logger.exception("Fatal error in set_probe_options_per_interface:")
         return False
 
     return True
@@ -1231,7 +1242,7 @@ def set_probe_options_non_interface_specific(old_probe_configs_dict, rem_con, lo
             reset_agent_command = 'y\n' # In this case you are prompted to reset the agent before coninuing.
 
         if reset_agent_command != '': # Skip the reset if none of the major settings needs to be modified.
-            print(f'\nResetting the probe agent, please wait...', end='')
+            print(f'\nResetting the probe agent following major probe mode set operations, please wait...', end='')
             reset_status = do_agent_reset(reset_agent_command, rem_con, logger)
             if output == False:
                 logger.error(f'[ERROR] set_probe_options_non_interface_specific, Console command: {command} failed')
@@ -1256,15 +1267,15 @@ def set_probe_options_non_interface_specific(old_probe_configs_dict, rem_con, lo
             logger.error(f'[ERROR] set_probe_options_non_interface_specific, Console command: {command} has Unexpected output: {output}')
             return False
         reset_agent_command = 'y\n' # In this case you are prompted to reset the agent before coninuing.
-        print(f'\nResetting the probe agent, please wait...', end='')
+        print(f'\nResetting the probe agent following table size allocation commit, please wait...', end='')
         reset_status = do_agent_reset(reset_agent_command, rem_con, logger)
         if output == False:
             logger.error(f'[ERROR] set_probe_options_non_interface_specific, Console command: {command} failed')
             return False
         else:
             print('Done')
-    except:
-        logger.error(f'[ERROR] set_probe_options_non_interface_specific, An error has occurred while setting probe options non interface specific')
+    except Exception:
+        logger.exception(f"Fatal error: set_probe_options_non_interface_specific, An error has occurred while setting probe options non interface specific")
         return False
 
     return True
@@ -1334,8 +1345,8 @@ def set_probe_software_options(old_probe_configs_dict, rem_con, logger):
         if 'Probe IP V4 address' not in output: # We did not enter the localconsole menu correctly.
             logger.error(f'[ERROR] set_probe_software_options, Console command: {command} has Unexpected output: {output}')
             return False
-    except:
-        logger.error(f'[ERROR] set_probe_software_options, An error has occurred while setting probe software options')
+    except Exception:
+        logger.exception(f"Fatal error: set_probe_software_options, An error has occurred while setting probe software options")
         return False
 
     return True
@@ -1425,8 +1436,8 @@ def set_probe_protocol_options(old_probe_configs_dict, rem_con, logger):
         if 'Probe IP V4 address' not in output: # We did not enter the localconsole menu correctly.
             logger.error(f'[ERROR] set_probe_protocol_options, Console command: {command} has Unexpected output: {output}')
             return False
-    except:
-        logger.error(f'[ERROR] set_probe_protocol_options, An error has occurred while setting probe protocol options')
+    except Exception:
+        logger.exception(f"Fatal error: set_probe_protocol_options, An error has occurred while setting probe protocol options")
         return False
     return True
 
@@ -1577,8 +1588,8 @@ def set_probe_http_options(old_probe_configs_dict, rem_con, logger):
                 logger.error(f'[ERROR] set_probe_http_options, Console command: {command} has Unexpected output: {output}')
                 return False
         # Stay in the command line mode for the next function.
-    except:
-        logger.error(f'[ERROR] set_probe_http_options, An error has occurred while setting probe http options')
+    except Exception:
+        logger.exception(f"Fatal error: set_probe_http_options, An error has occurred while setting probe http options")
         return False
 
     return True
@@ -1647,8 +1658,8 @@ def set_probe_security_options(old_probe_configs_dict, rem_con, logger):
         if 'Probe IP V4 address' not in output: # We did not enter the localconsole menu correctly.
             logger.error(f'[ERROR] set_probe_security_options, Console command: {command} has Unexpected output: {output}')
             return False
-    except:
-        logger.error(f'[ERROR] set_probe_security_options, An error has occurred while setting probe security options')
+    except Exception:
+        logger.exception(f"Fatal error: set_probe_security_options, An error has occurred while setting probe security options")
         return False
     return True
 
@@ -1760,8 +1771,8 @@ def set_probe_agent_options(old_probe_configs_dict, rem_con, logger):
         if 'Probe IP V4 address' not in output: # We did not enter the localconsole menu correctly.
             logger.error(f'[ERROR] set_probe_agent_options, Console command: {command} has Unexpected output: {output}')
             return False
-    except:
-        logger.error(f'[ERROR] set_probe_agent_options, An error occurred while setting the probe agent options')
+    except Exception:
+        logger.exception(f"Fatal error: set_probe_agent_options, An error occurred while setting the probe agent options")
         return False
     return True
 
@@ -1871,15 +1882,15 @@ def set_probe_configs(old_probe_configs_dict, interface_list, rem_con, logger):
             return False
 
         reset_agent_command = 'y\n' # Respond to the confirmation prompt with a 'y'.
+        print(f'\nAll set operations complete...Resetting the probe agent, please wait...', end='')
         reset_status = do_agent_reset(reset_agent_command, rem_con, logger)
-        print(f'\nResetting the probe agent, please wait...', end='')
         if output == False:
             logger.error(f'[ERROR] set_probe_configs, Console command: {command} failed')
             return False
         else:
             print('Done')
-    except:
-        logger.error(f'[ERROR] set_probe_configs, An error occurred while setting the probe configs')
+    except Exception:
+        logger.exception(f"Fatal error: set_probe_configs, An error occurred while setting the probe configs")
         return False
 
     return True
@@ -2105,8 +2116,8 @@ def gather_probe_configs(logger, rem_con):
             logger.error("[ERROR] Gather probe configs, exit command failed")
             return False
         #print("\r                                             ", end='') # Clear the progress print line before we return.
-    except:
-        logger.error("[ERROR] Gather probe configs, An error has occurred while gathering the probe configs")
+    except Exception:
+        logger.exception(f"Fatal error: Gather probe configs, An error has occurred while gathering the probe configs")
         return False
 
     return old_probe_configs_dict, interface_list
@@ -2122,7 +2133,7 @@ def write_config_to_json(config_filename, old_probe_configs_dict, logger):
     # Backup the current probe configs by writing the old_probe_configs_dict to a json file.
     try:
         with open(config_filename,"w") as f:
-            json.dump(old_probe_configs_dict, f)
+            json.dump(old_probe_configs_dict, f, indent=4, sort_keys=True)
             print(f'\nBacking up the probe config to JSON file: {config_filename}')
             logger.info(f'[INFO] Backup the probe config to JSON file: {config_filename}')
     except IOError as e: # Handle file I/O errors.
@@ -2131,11 +2142,8 @@ def write_config_to_json(config_filename, old_probe_configs_dict, logger):
         print("I/O error({0}): {1}".format(e.errno, e.strerror))
         logger.error(f'[ERROR] I/O error: {e.errno}:  {e.strerror}.')
         return False
-    except: # Handle other exceptions such as attribute errors.
-        print(f'[ERROR] Unable to backup the probe config to the JSON config file: {config_filename}')
-        logger.error(f'[ERROR] Unable to backup the probe config to the JSON config file: {config_filename}')
-        print(f'Unexpected error: {sys.exc_info()[0]}')
-        logger.error(f'[ERROR] Unexpected error: {sys.exc_info()[0]}.')
+    except Exception:
+        logger.exception(f"Fatal error: Unable to backup the probe config to the JSON config file: {config_filename}")
         return False
     return True
 
@@ -2154,11 +2162,8 @@ def read_config_from_json(config_filename, logger):
         print("I/O error({0}): {1}".format(e.errno, e.strerror))
         logger.error(f'[ERROR] I/O error: {e.errno}:  {e.strerror}.')
         return False
-    except: #handle other exceptions such as attribute errors
-        print(f'[ERROR] Unable to read the JSON config file:: {config_filename}')
-        logger.error(f'[ERROR] Unable to read the JSON config file: {config_filename}')
-        print(f'Unexpected error: {sys.exc_info()[0]}')
-        logger.error(f'[ERROR] Unexpected error: {sys.exc_info()[0]}.')
+    except Exception:
+        logger.exception(f"Fatal error: Unable to read the JSON config file: {config_filename}")
         return False
 
 def close_ssh_session(user_creds, client, rem_con, logger):
@@ -2178,9 +2183,8 @@ def close_ssh_session(user_creds, client, rem_con, logger):
         print(f'\nSSH connection to: {hostname} successfully closed.')
         logger.info(f'[INFO] SSH connection to: {hostname} successfully closed.')
         return True
-    except:
-        print(f'\n[CRITICAL] Unable to close SSH connection to: {hostname}.')
-        logger.critical(f'[CRITICAL] Unable to close SSH connection to: {hostname}.')
+    except Exception:
+        logger.exception(f"Fatal error: Unable to close SSH connection to: {hostname}")
         return False
 
 
