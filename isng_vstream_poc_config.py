@@ -20,14 +20,10 @@ scope for this program.
 import time
 import os
 import sys
-import subprocess
-import pathlib
-import requests
 from datetime import datetime
 import logging
 from cryptography.fernet import Fernet
 import paramiko
-import scp
 import pprint
 import re
 import string
@@ -51,19 +47,18 @@ class Credentials:
             Use a keyfile or not for the SSH connection.
         probe_ssh_keyfile : str
             The filename (include the path) of the SSH key file.
-        probekey : str
+        pkey : str
             The key contents of the probe_ssh_keyfile.
         time_of_exp : str
             The number of seconds before the encrypted password expires.
         """
     def __init__(self):
         self.probehostname = ''
-        self.probeport = 22
+        self.probeport = '22'
         self.probeusername = ''
         self.probepassword = ''
         self.use_ssh_keyfile = False
         self.probe_ssh_keyfile = ''
-        self.probekey_file = ''
         self.pkey = ''
         self.time_of_exp = ''
 
@@ -140,24 +135,31 @@ def get_decrypted_credentials(cred_filename, probekey_file, logger):
                 except SSHException as error:
                     logger.critical(f'[CRITICAL] An SSHException has occurred {error}')
                     return False
-            else: # no don't use an SSH key file but rather a username/password.
+            else: # no don't use an SSH key file but rather a password.
                 try: # Open the keyfile containing the key needed to decrypt the password.
                     with open(probekey_file, 'r') as probekey_in:
                         probekey = probekey_in.read().encode()
-                        fng1 = Fernet(probekey)
+                        fprobe = Fernet(probekey)
                 except Exception:
                     logger.exception(f"Fatal error: Unable to open probekey_file: {probekey_file}")
                     return False
                 user_creds.use_ssh_keyfile = False
                 user_creds.probeusername = lines[3].partition('=')[2].rstrip("\n")
                 user_creds.probepassword = lines[4].partition('=')[2].rstrip("\n")
-                user_creds.probepassword_pl = fng1.decrypt(user_creds.probepassword.encode()).decode()
+                user_creds.probepassword_pl = fprobe.decrypt(user_creds.probepassword.encode()).decode()
             user_creds.probehostname = lines[5].partition('=')[2].rstrip("\n")
             user_creds.probePort = lines[6].partition('=')[2].rstrip("\n")
-    except Exception:
+    except IOError as e: # Handle file I/O errors.
+        print(f"Fatal error: Unable to open cred_filename: {cred_filename}")
+        logger.error(f"Fatal error: Unable to open cred_filename: {cred_filename}")
+        print("I/O error({0}): {1}".format(e.errno, e.strerror))
+        logger.error(f'[ERROR] I/O error: {e.errno}:  {e.strerror}.')
+        return False
+    except Exception: # Handle other unexpected errors.
         logger.exception(f"Fatal error: Unable to open cred_filename: {cred_filename}")
         return False
-    return user_creds
+
+    return user_creds # The function was successful.
 
 def open_ssh_session(user_creds, logger):
     """
@@ -2190,7 +2192,7 @@ def close_ssh_session(user_creds, client, rem_con, logger):
 
 def main():
 
-    golden_probe_config_filename = 'golden_probe_config.json'
+    #golden_probe_config_filename = 'golden_probe_config.json'
 
     # Hardcoding the filenames for encrypted credentials and the key file needed to decrypt the credentials.
     cred_filename = 'ProbeCredFile.ini'
