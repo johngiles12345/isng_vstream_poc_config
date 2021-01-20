@@ -28,6 +28,7 @@ import pprint
 import re
 import string
 import json
+import argparse
 
 class Credentials:
     """
@@ -62,6 +63,44 @@ class Credentials:
         self.pkey = ''
         self.time_of_exp = ''
 
+def flags_and_arguments(prog_version, logger):
+    """Allows the user to add optional flags to the launch command.
+    Adding to --get flag will tell the program to only collect configurations and output to a JSON file.
+     when using the --get flag, the program will end without doing any set commands to the probe.
+    :program_version: Pass in the program version so the user can type --version.
+    Return status = True if there are no errors, False if there are errors encountered.
+    Return is_set_config_true = False if the user specified the --get optional flag.
+    Return is_set_config_true = True if the user did not specify the --get optional flag.
+    """
+    try:
+        # Define the program description
+        text = 'This program is used to get probe configurations and back them up. Also it can set probe configurations.'
+        # Initiate the parser with a description
+        parser = argparse.ArgumentParser(description=text)
+        parser.add_argument('--get', action="store_true", help='only get the probe configs and backup. Do not set any probe configs', dest='get', default=False)
+        #parser.add_argument('--set', action="store_true", help='set the nGeniusONE config to match the xxxx_config_current.csv', dest='set', default=False)
+        parser.add_argument('--version', action="store_true", help="show program version and exit", dest='version', default=False)
+        #parser.add_argument('--config', dest='config_type', required=True, action="store", choices=['sites', 'client_comm', 'interfaces', 'apps'],
+                    #help="specify which nGeniusONE configuration you want; sites, client_comm, interfaces or apps")
+        # Parse the arguments and create a result.
+        args = parser.parse_args()
+        if args.version == True: # They typed either "-V" or "--version" flags.
+            print(f'Program version is: {prog_version}')
+            sys.exit()
+        if args.get == True: # They typed the "--get" flag.
+            is_set_config_true = False # I only need to do a get and backup operation. No set.
+        else:
+            is_set_config_true = True # I need to do get, backup and set operations.
+        status = True
+
+        return status, is_set_config_true
+    except Exception: # An error has occurred, log the error and return a status of False.
+        logger.exception(f'[ERROR] An exception occurred while attempting to parse the program launch arguments')
+        status = False
+        is_set_config_true = False
+
+        return status, is_set_config_true
+
 def spinning_cursor():
     """Rotates through spinning cursor characters to print to stdout.
     :yield: Then next cursor character to print.
@@ -87,13 +126,12 @@ def create_logging_function():
     """Creates the logging function and specifies a log file to write to that is date-time stamped.
     Use this option to log to stdout and stderr using systemd (import os):
     logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO"))
-    :param log_filename: A string that is the name of the logfile to write to in the same directory.
     :return: The logger instance if successfully completed, and the logging filename. Return False if not successful.
     """
     now = datetime.now()
     date_time = now.strftime("%Y_%m_%d_%H%M%S") # Used for timestamping filenames.
 
-    log_filename = 'probe_poc_config_' + date_time + '.log' #The name of the log file we will write to.
+    log_filename = 'probe_config_' + date_time + '.log' #The name of the log file we will write to.
 
     try:
         # Call the basicConfig module and pass in the log file filename.
@@ -106,7 +144,7 @@ def create_logging_function():
         logger.info(f"*** Start of logs {date_time} ***")
         return logger, log_filename
     except Exception:
-        logger.exception(f"Fatal error: Unable to create log file function for: {log_filename}")
+        print(f"[ERROR] An exception occurred while attempting to the create log file function for: {log_filename}")
         return False
 
 def get_decrypted_credentials(cred_filename, probekey_file, logger):
@@ -114,6 +152,7 @@ def get_decrypted_credentials(cred_filename, probekey_file, logger):
     Decrypt the credentials and place all the user credentials attributes into a user_creds instance.
     :param cred_filename: A string that is the name of the cred_filename to read in.
     :param probekey_file: A string that is the name of the probe's key file to read in.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: If successful, return the user_creds as a class instance that contains all the params needed to
     log into the probe via SSH. Return False if any error occurrs.
     """
@@ -141,7 +180,7 @@ def get_decrypted_credentials(cred_filename, probekey_file, logger):
                         probekey = probekey_in.read().encode()
                         fprobe = Fernet(probekey)
                 except Exception:
-                    logger.exception(f"Fatal error: Unable to open probekey_file: {probekey_file}")
+                    logger.exception(f"[ERROR] An exception occurred while attempting to open probekey_file: {probekey_file}")
                     return False
                 user_creds.use_ssh_keyfile = False
                 user_creds.probeusername = lines[3].partition('=')[2].rstrip("\n")
@@ -156,7 +195,7 @@ def get_decrypted_credentials(cred_filename, probekey_file, logger):
         logger.error(f'[ERROR] I/O error: {e.errno}:  {e.strerror}.')
         return False
     except Exception: # Handle other unexpected errors.
-        logger.exception(f"Fatal error: Unable to open cred_filename: {cred_filename}")
+        logger.exception(f"[ERROR] An exception occurred while attempting to open cred_filename: {cred_filename}")
         return False
 
     return user_creds # The function was successful.
@@ -164,8 +203,8 @@ def get_decrypted_credentials(cred_filename, probekey_file, logger):
 def open_ssh_session(user_creds, logger):
     """
     Opens an SSH session to the probe using the paramiko module.
-    :param user_creds: A class instance that contains all the necessary SSH connection parameters.
-    :param logger: A class instance of logger so we can log messages.
+    :user_creds: A class instance that contains all the necessary SSH connection parameters.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: The SSH client instance if successful, False if unsuccessful.
     """
     hostname = user_creds.probehostname
@@ -196,7 +235,7 @@ def open_ssh_session(user_creds, logger):
         #client.connect(hostname,username,pkey=none,key_filename='id_rsa',look_for_keys=True)
         return client
     except Exception:
-        logger.exception(f"Fatal error: Unable to open SSH connection to: {hostname}")
+        logger.exception(f"[ERROR] An exception occurred while attempting to open SSH connection to: {hostname}")
         return False
 
 def execute_single_command_on_remote(command, rem_con, logger):
@@ -205,6 +244,7 @@ def execute_single_command_on_remote(command, rem_con, logger):
     :command: A string that contains the command with an new line char at the end to simulate
     hitting the enter key.
     :rem_con: A class instance of invoke_shell that opens a remote console shell over SSH.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: The output string that was returned from the console as a result of the command.
     """
     #print(f'[INFO] Executing command: {command}')
@@ -219,15 +259,15 @@ def execute_single_command_on_remote(command, rem_con, logger):
         output = rem_con.recv(2048) # Pull down the receive buffer from the remote console to a limit of 2048 bytes.
         output = output.decode("utf-8") # Output comes back as a file-like binary object. Decode to a string.
     except Exception:
-        logger.exception(f"Fatal error: Execute single command: {command} over the SSH shell has failed")
+        logger.exception(f"[ERROR] An exception occurred while attempting to execute the single command: {command} over the SSH shell")
         return False
     return output
 
 def init_probe_console(logger, client):
     """
     Sends commands to the SSH client to establish a console object and set the user to su.
-    :param client: The SSH client instance established with the probe.
-    :param logger: An instance of logger so we can log messages.
+    :client: The SSH client instance established with the probe.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: rem_con, A class instance of invoke_shell that opens a remote console shell over SSH.
     """
     try:
@@ -244,7 +284,7 @@ def init_probe_console(logger, client):
             logger.error("[ERROR] SSH command invoke_shell has failed. 'Last login' missing from output")
             return False
     except Exception:
-        logger.exception(f"Fatal error: SSH command invoke_shell has failed")
+        logger.exception(f"[ERROR] An exception occurred while attempting to execute SSH command invoke_shell")
         return False
 
     command = "sudo su -\n"
@@ -258,333 +298,530 @@ def init_probe_console(logger, client):
 
     return rem_con
 
-def get_probe_options(config_attributes_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger):
+def get_probe_options(config_attributes_list, rem_con, old_probe_configs_dict, options_type, logger):
     """
     Query the probe for the current config parameters of a set of related options.
     The list of options returned by the probe will be used to fill in the attributes for the old_probe_configs_dict.
     :config_attributes_list: A list of attribute names to be entered into the old_probe_configs_dict.
     :interface_list: A list of probe monitor interface numbers that are available.
-    :index_counter: An integer counter used to access each config element as we loop through the interfaces.
     :rem_con: An instance of the remote console shell session to the probe.
     :old_probe_configs_dict: A dictionary of all the probe configurations.
     :options_type: The name of the probe options that we want to fetch from the probe.
-    :return: False if any command fails, The filled in old_probe_configs_dict if all commands pass.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
+    :return: The filled in old_probe_configs_dict if all commands pass and status = True.
+    Return old_probe_configs_dict and status = False if any errors occur.
     """
-    formatted_options_configs = [] # create an empty list to hold the options settings returned by the probe.
-
-    formatted_configs = [] # Initialize an empty list to hold the formatted configs prior to adding them to the dict.
-    if options_type == 'agent_configs':
-        command = "get agent\n"
-    else:
-        command = "get " + options_type + "\n"
-    output = execute_single_command_on_remote(command, rem_con, logger)
-    if output == False:
-        logger.error(f'[ERROR] get_probe_options, Console command: {command} failed')
-        return False
     try:
-        options_configs = output.splitlines()
-        for options_config in options_configs:
-            options_config_split = options_config.split()
-            options_config_new = " ".join(options_config_split)
-            formatted_options_configs.append(options_config_new)
+        #formatted_configs = [] # Initialize an empty list to hold the formatted configs prior to adding them to the dict.
+        if options_type == 'agent_configs':
+            command = "get agent\n"
+        else:
+            command = "get " + options_type + "\n"
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        #print(f"\nraw output is: \n{output}")
+        if output == False:
+            logger.error(f'[ERROR] get_probe_options, Console command: {command} failed')
+            status = False
+            return old_probe_configs_dict, status
         for config_attribute in config_attributes_list:
-            if options_type == 'http': # Another inconsistency in the attribute string names where http has = sign in them.
-                old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_configs[index_counter].split()[-1]
-            elif config_attribute == 'Infinistream Console Support' and old_probe_configs_dict['agent_configs'][0]['model_number'] == 'vSTREAM':
-                continue # This setting does not exist for vStreams.
-            elif config_attribute == 'Eth0 GRE Monitoring' and old_probe_configs_dict['agent_configs'][0]['model_number'] == 'vSTREAM':
-                continue # This setting does not exist for vStreams.
-            # Another inconsistency in the attribute string names. Using spaces rather than underscores.
-            elif config_attribute == 'Traffic Violations' or config_attribute == 'nGeniusONE Managed' or config_attribute == 'Health Monitoring' or config_attribute == 'Network Analyzer Support':
-                old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_configs[index_counter].split()[-1]
-            else:
-                old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_configs[index_counter].partition(config_attribute + ' ')[2]
-            index_counter += 1
+            formatted_options_configs, status = get_formatted_options_configs(output, logger)
+            if status == False:
+                logger.error(f'[ERROR] get_probe_options, get_formatted_options_configs failed')
+                return old_probe_configs_dict, status
+            old_probe_configs_dict, status = process_output_non_interface(old_probe_configs_dict, options_type, config_attribute, formatted_options_configs, logger)
+            if status == False:
+                logger.error(f'[ERROR] get_probe_options, process_output_non_interface failed')
+                return old_probe_configs_dict, status
     except Exception:
-        logger.exception(f"Fatal error: get {options_type} has failed")
-        return False
+        logger.exception(f"[ERROR] An exception occurred while atempting the get {options_type} command")
+        status = False
+        return old_probe_configs_dict, status
 
-    return old_probe_configs_dict
+    return old_probe_configs_dict, status
 
-def get_probe_options_interface_specific(config_attributes_list, interface_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger):
+def get_probe_options_interface_specific(config_attributes_list, interface_list, rem_con, old_probe_configs_dict, options_type, logger):
     """
     For each monitor interface, send a command the probe to get the specific settings passed in as config_attributes_list.
     The setting for each config attribute will be used to fill in the attributes for the old_probe_configs_dict.
     :config_attributes_list: A list of attribute names to be entered into the old_probe_configs_dict.
     :interface_list: A list of probe monitor interface numbers that are available.
-    :index_counter: An integer counter used to access each config element as we loop through the interfaces.
     :rem_con: An instance of the remote console shell session to the probe.
     :old_probe_configs_dict: A dictionary of all the probe configurations.
-    :options_type: In this case, interface_specific to indicate that we need send the query with the interface number included in the command.
-    :return: False if any command fails, The filled in old_probe_configs_dict if all commands pass.
+    :options_type: In this case, interface_specific to indicate that we need send the query with the
+     interface number included in the command.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
+    :return: The filled in old_probe_configs_dict and status = True if all commands pass.
+    Return the old_probe_configs_dict and status = False if any errors occur.
     """
-
-    formatted_options_configs = [] # create an empty list to hold the options settings returned by the probe.
-    loop_counter = index_counter # The index_counter is our starting point for the elements returned by get 'options_type'.
-    interface_loop_counter = 0 # Needed to send get asi for the first interface, 'y' for each subsequent interface.
     try:
         for interface in interface_list:
             old_probe_configs_dict[options_type][0]['interface '+ interface] = [{}]
         for config_attribute in config_attributes_list:
-            formatted_options_configs = [] # Reset the list each time we loop to the next config_attribute.
+            config_attributes_list_short = [] # create an empty list to hold a single config_attribute rather than the whole list.
+            # This is what makes this function different from the others is that we have to execute a command for every...
+            # config item in the config_attributes_list and for every interface, one by one.
             for interface in interface_list:
-                formatted_options_configs = [] # For each interface, reset formatted_options_configs to an empty list
                 command = "get " + config_attribute + " " + interface + "\n"
                 #print(f'\ncommand is: {command}')
                 output = execute_single_command_on_remote(command, rem_con, logger)
                 if output == False:
                     logger.error(f'[ERROR] get_probe_options_interface_specific, Console command: {command} failed')
-                    return False
-                options_configs = output.splitlines()
-
-                for options_config in options_configs:
-                    #print(f'\noptions_config is: {options_config}')
-                    options_config_split = options_config.split()
-                    #print(f'\noptions_config_split is: {options_config_split}')
-                    options_config_new = " ".join(options_config_split)
-                    #print(f'\noptions_config_new is: {options_config_new}')
-                    formatted_options_configs.append(options_config_new)
-                #print(f'\nformatted_options_configs is: {formatted_options_configs}')
-                if config_attribute == 'skt_vlan_enable':
-                    if 'skt_vlan_enable is ON' in formatted_options_configs[2]:
-                        old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'on'
-                    else:
-                        old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'off'
-
-                if config_attribute == 'span_duplicate':
-                    if 'On' in formatted_options_configs[3]:
-                        old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'on'
-                    else:
-                        old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'off'
-                if config_attribute == 'ssl_sni':
-                    if 'is enabled on' in formatted_options_configs[2]:
-                        old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'on'
-                    else:
-                        old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = 'off'
+                    status = False
+                    return old_probe_configs_dict, status
+                config_attributes_list_short.append(config_attribute) # In this case, we want to process each config_attribute...
+                # one by one rather than passing the whole config attributes list to process_output_per_interface.
+                formatted_options_configs, status = get_formatted_options_configs(output, logger)
+                if status == False:
+                    logger.error(f'[ERROR] get_probe_options_interface_specific, get_formatted_options_configs failed')
+                    return old_probe_configs_dict, status
+                old_probe_configs_dict, status = process_output_per_interface(config_attributes_list, old_probe_configs_dict, options_type, formatted_options_configs, interface, logger)
+                if status == False:
+                    logger.error(f'[ERROR] get_probe_options_interface_specific, process_output_per_interface failed')
+                    return old_probe_configs_dict, status
     except Exception:
-        logger.exception(f"Fatal error: get_probe_options_interface_specific, Get config attribute for an interface has failed")
-        return False
+        logger.exception(f"[ERROR] An exception occurred in get_probe_options_interface_specific, Get config attribute for an interface")
+        status = False
+        return old_probe_configs_dict, status
+    status = True
+    return old_probe_configs_dict, status
 
-    return old_probe_configs_dict
+def process_output_non_interface(old_probe_configs_dict, options_type, config_attribute, formatted_options_configs, logger):
+    """
+    After retrieving the output from a get command to the probe, the data supplied requires some formatting...
+     so we can create searchable lists that hold the configuration item and its current configuration status.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
+    :return: old_probe_configs_dict, status. status = True if successful, False if there were any errors.
+    """
+    try:
+        if config_attribute == 'config_download':
+            formatted_config_attribute = 'config_download :'
+        elif config_attribute == 'probe_mode':
+            formatted_config_attribute = 'Probe Mode :'
+        elif config_attribute == 'vq payload':
+            formatted_config_attribute = 'vq payload:'
+        elif config_attribute == 'vq dtmf_events':
+            formatted_config_attribute = 'vq dtmf_events:'
+        elif config_attribute == 'asi_mode':
+            formatted_config_attribute = 'asi_mode is currently set to'
+        elif config_attribute == 'capture_slice_size':
+            formatted_config_attribute = 'Change capture slice size :'
+        elif config_attribute == 'data_capture':
+            formatted_config_attribute = 'Toggle data capture :'
+        else:
+            formatted_config_attribute = config_attribute
+        #print(f'\nformatted_config_attribute is: {formatted_config_attribute}')
+        # Depending on the config of the probe, the list of attributes can change.
+        for formatted_options_config in formatted_options_configs: # loop through the list and see if the config_attribute is there.
+            #print(f'formatted_options_config is: {formatted_options_config}')
+            #formatted_options_config_list = formatted_options_config.partition(formatted_config_attribute + ' ')
+            #print(f"\nformatted_options_config_list after split is: {formatted_options_config_list}")
+            #print(f'compare left formatted_config_attribute is: {formatted_config_attribute}')
+            #print(f'compare right formatted_options_config is: {formatted_options_config}')
+            if formatted_config_attribute in formatted_options_config:
+                index = formatted_options_configs.index(formatted_options_config) # Find the index of the formatted_options_configs
+                #print(f'I found {formatted_config_attribute} at index position {index}')
+                index_found = True
+                break # I found the config_attribute, break out of this search loop.
+            else:
+                #print(f'I did not find the index for this {config_attribute}')
+                index_found = False
+                continue
+        # Add the config item to the dictionary for backup.
+        if index_found == True: #I found the config item.
 
-def get_probe_options_per_interface(config_attributes_list, interface_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger):
+            old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_configs[index].partition(formatted_config_attribute + ' ')[2]
+            #old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_configs[index].partition(formatted_config_attribute)[2].strip('= ')
+        else:
+            #print(f'I did not find {formatted_config_attribute} in the formatted_options_config_list' )
+            pass
+        status = True
+        return old_probe_configs_dict, status
+    except Exception:
+        logger.exception(f"[ERROR] An exception occurred in process_output_non_interface")
+        status = False
+        return old_probe_configs_dict, status
+
+def get_formatted_options_configs(output, logger):
+    """
+    After retrieving the output from a get command to the probe, the data supplied requires some formatting...
+     so we can create searchable lists that hold the configuration item and its current configuration status.
+    :output: The raw output returned by the probe that requires formatting.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
+    :return: If successful, return the formatted_options_configs and status = True. Return empty formatted_options_configs
+     list and status = False if there are any exceptions.
+    """
+    try:
+        formatted_options_configs = [] # Initialize an empty list to hold the formatted options configs.
+        options_configs = output.splitlines()
+        for options_config in options_configs:
+            #print(f'\nLooking for bogus options_config items: {options_config}')
+            if ('get ' in options_config or options_config == '' or '%' in options_config or 'Ifn  Type (current)' in options_config
+             or 'Press Enter to Continue? [y/n]:' in options_config or 'options =' in options_config or 'ext_options =' in options_config
+             or '[2] Change user_password' in options_config or '[5] Clear All passwords' in options_config
+             or '[99] Go Back to Main Menu' in options_config or 'Secure Access Menu:' in options_config
+             or 'Selection:' in options_config or '** ' in options_config or 'Select Interface :' in options_config
+             or 'New Interface' in options_config):
+                #print('skipping this options_config')
+                continue
+            options_config_split = options_config.split()
+            options_config_new = " ".join(options_config_split)
+            formatted_options_configs.append(options_config_new)
+    except Exception:
+        logger.exception(f"[ERROR] An exception occurred in get_formatted_options_configs")
+        status = False
+        return formatted_options_configs, status
+    status = True
+    return formatted_options_configs, status
+
+def process_output_per_interface(config_attributes_list, old_probe_configs_dict, options_type, formatted_options_configs, interface, logger):
+    """
+    After retrieving the output from a get command to the probe, the data supplied requires some formatting...
+     so we can create searchable lists that hold the configuration item and its current configuration status.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
+    :return: old_probe_configs_dict, status. status = True if successful, False if there were any errors.
+    """
+    index_found = False # I ran into a case where this is not set within the for loop. Initializing.
+    try:
+        for config_attribute in config_attributes_list:
+            if config_attribute == 'community_type':
+                formatted_config_attribute = interface
+            elif config_attribute == 'skt_vlan_enable':
+                formatted_config_attribute = 'skt_vlan_enable is'
+            elif config_attribute == 'span_duplicate':
+                formatted_config_attribute = interface
+            elif config_attribute == 'ssl_sni':
+                formatted_config_attribute = 'ssl_sni is'
+            else:
+                formatted_config_attribute = config_attribute
+            #print(f'\nformatted_config_attribute is: {formatted_config_attribute}')
+            # Depending on the config of the probe, the list of attributes can change.
+            #print(f'formatted_options_configs is: {formatted_options_configs}')
+            for formatted_options_config in formatted_options_configs: # loop through the list and see if the config_attribute is there.
+                #print(f'formatted_options_config is: {formatted_options_config}')
+                #print(f"Just be before partition, the formatted_config_attribute + ' ' is: {formatted_config_attribute + ' '}")
+                formatted_options_config_list = formatted_options_config.partition(formatted_config_attribute + ' ')
+                #print(f"\nformatted_options_config_list after partition is: {formatted_options_config_list}")
+                if formatted_config_attribute in formatted_options_config:
+                    index = formatted_options_configs.index(formatted_options_config) # Find the index of the formatted_options_configs
+                    #print(f'I found {config_attribute} at index position {index}')
+                    index_found = True
+                    break # I found the config_attribute, break out of this search loop.
+                else:
+                    #print(f'I did not find the index for this {config_attribute}')
+                    index_found = False
+                    continue
+            if index_found == False: # This config_attribute was not found in the probe config for this interface.
+                #print(f'\nI did not find {config_attribute} at all in the list of formatted_options_configs')
+                #print(f'options_type is: {options_type}')
+                # Its not unusual for some attributes in the super set not to be found on some interfaces.
+                # Depending on the probe configuration, the list of attributes found on each interface can change.
+                continue # Do not proceed, go to the next config_attribute in the list. Just skip it.
+            else:
+                # Add the config item to the dictionary for backup.
+                #print(f"\nformatted_options_configs[index] is: {formatted_options_configs[index]}")
+                #print(f"\nformatted_options_configs[index].partition(formatted_config_attribute + ' ')[2] is: {formatted_options_configs[index].partition(formatted_config_attribute + ' ')[2]}")
+                old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_configs[index].partition(formatted_config_attribute + ' ')[2]
+        status = True
+        return old_probe_configs_dict, status
+    except Exception:
+        logger.exception(f"[ERROR] An exception occurred in process_output_per_interface")
+        status = False
+        return old_probe_configs_dict, status
+
+def get_probe_options_per_interface(config_attributes_list, interface_list, rem_con, old_probe_configs_dict, options_type, logger):
     """
     For each monitor interface, send a command the probe to get the whole options list.
     The list of options returned by the probe will be used to fill in the attributes for the old_probe_configs_dict.
     :config_attributes_list: A list of attribute names to be entered into the old_probe_configs_dict.
     :interface_list: A list of probe monitor interface numbers that are available.
-    :index_counter: An integer counter used to access each config element as we loop through the interfaces.
     :rem_con: An instance of the remote console shell session to the probe.
-    :old_probe_configs_dict: A dictionary of all the probe configurations.
+    :old_probe_configs_dict: A dictionary of all the probe configurations that we will add to.
     :options_type: The name of the probe options that we want to fetch from the probe.
-    :return: False if any command fails, The filled in old_probe_configs_dict if all commands pass.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
+    :return: The filled in old_probe_configs_dict and status = True if all commands pass.
+    Returen the old_probe_configs_dict and status = False if any errors occur.
     """
-
-    formatted_options_configs = [] # create an empty list to hold the options settings returned by the probe.
-    loop_counter = index_counter # The index_counter is our starting point for the elements returned by get 'options_type'.
-    interface_loop_counter = 0 # Needed to send get asi for the first interface, 'y' for each subsequent interface.
+    loop_counter = 0 # Used to determine if we need to do get asi or just responding to yes prompt with enter.
     try:
         for interface in interface_list:
+            # Create an empty dictionary to hold the configs for each interface.
             old_probe_configs_dict[options_type][0]['interface '+ interface] = [{}]
-
+        # loop_counter = 0 # If options_type is asi, the first time through the interface loop, we...
+        # need to do a 'get asi'. From then on, we just hit enter to advance to the next asi interface.
         for interface in interface_list:
-            config_counter = index_counter# Reset the index to what was passed into the function.
+            #print(f'\noptions_type is: {options_type}')
             if options_type != 'asi': # Get asi does not use set curr_interface, you must hit enter to advance.
                 command = "set curr_interface " + interface +" \n"
                 output = execute_single_command_on_remote(command, rem_con, logger)
                 if output == False:
                     logger.error(f'[ERROR] get_probe_options_per_interface, Console command: {command} failed')
-                    return False
-
-            formatted_options_configs = []
-            #print(f'\noptions_type is: {options_type}')
-            #print(f'\ninterface_loop_counter is: {interface_loop_counter}')
-            if options_type == 'asi' and interface_loop_counter > 0:
-                command = "\n" # Send the yes response to get asi on the next interface
-            else:
+                    status = False
+                    return old_probe_configs_dict, status
                 command = "get " + options_type + "\n"
-            output = execute_single_command_on_remote(command, rem_con, logger)
+                output = execute_single_command_on_remote(command, rem_con, logger)
+            elif options_type == 'asi':
+                if loop_counter == 0: # This is the first interface, do a 'get asi' command.
+                    command = "get asi" + "\n"
+                else:
+                    command = "\n" # Send the yes response to get asi on the next interface.
+                output = execute_single_command_on_remote(command, rem_con, logger)
+            #print(f"\nraw output is: \n{output}")
             if output == False:
                 logger.error(f'[ERROR] get_probe_options_per_interface, Console command: {command} failed')
-                return False
-            options_configs = output.splitlines()
-            for options_config in options_configs:
-                options_config_split = options_config.split()
-                options_config_new = " ".join(options_config_split)
-                formatted_options_configs.append(options_config_new)
-            #print(f'\nformatted_options_configs is: {formatted_options_configs}')
-            for config_attribute in config_attributes_list:
-                #print(f'loop_counter is: {loop_counter}')
-                #print(f'\nconfig_attribute is: {config_attribute}')
-                if config_attribute == 'la_burst': # Check the setting for 'la_burst' for this interface that we just set.
-                    #print(f'\nformatted_options_configs is: {formatted_options_configs}')
-                    #print(f"\nformatted_options_configs[loop_counter].partition(config_attribute + ' ')[2] is: {formatted_options_configs[loop_counter].partition(config_attribute + ' ')[2]}")
-                    if formatted_options_configs[loop_counter].partition(config_attribute + ' ')[2] == 'off':
-                        old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_configs[loop_counter].partition(config_attribute + ' ')[2]
-                        old_probe_configs_dict[options_type][0]['interface '+ interface][0]['la_type'] = "\\-" # la_burst is off, put a "-" in for la_type.
-                    else: # la_burst is on
-                        old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_configs[loop_counter].partition(config_attribute + ' ')[2]
-                else:
-                    old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_configs[loop_counter].partition(config_attribute + ' ')[2]
-
-                loop_counter += 1 # Increment the formatted_options_configs index number we use for each config_attribute loop.
-            if options_type == 'asi': # The menu for the first interface on get asi has two extra elements.
-                loop_counter = 2 # The subsequent interface menus have valid data starting at the third element.
-            else:
-                loop_counter = index_counter # Reset the counter to the right formatted_options_configs index number starting point that was passed in.
-            interface_loop_counter += 1 # Increment the interface loop counter to account for 'get asi' interactive menu.
-
+                status = False
+                return old_probe_configs_dict, status
+            formatted_options_configs, status = get_formatted_options_configs(output, logger)
+            if status == False:
+                logger.error(f'[ERROR] get_probe_options_per_interface, get_formatted_options_configs failed')
+                status = False
+                return old_probe_configs_dict, status
+            old_probe_configs_dict, status = process_output_per_interface(config_attributes_list, old_probe_configs_dict, options_type, formatted_options_configs, interface, logger)
+            if status == False:
+                logger.error(f'[ERROR] get_probe_options_per_interface, process_output_per_interface failed')
+                status = False
+                return old_probe_configs_dict, status
+            loop_counter += 1 # Used to determine if we need to do get asi or just responding to yes prompt with enter.
         if options_type == 'asi': # The final menu page prints out the V4 and V6 community masks.
             command = "\n" # Send the yes <enter> response to 'get asi' to end the menu and return to the command line prompt.
             output = execute_single_command_on_remote(command, rem_con, logger)
             if output == False:
                 logger.error(f'[ERROR] get_probe_options_per_interface, Console command: {command} failed')
-                return False
+                status = False
+                return old_probe_configs_dict, status
             command = "\n" # Send the yes <enter> response to 'get asi' to end the menu and return to the command line prompt.
             output = execute_single_command_on_remote(command, rem_con, logger)
             if output == False:
                 logger.error(f'[ERROR] get_probe_options_per_interface, Console command: {command} failed')
-                return False
+                status = False
+                return old_probe_configs_dict, status
     except Exception:
-        logger.exception(f"Fatal error: get_probe_options_per_interface, Getting probe options for an interface has failed")
-        return False
+        logger.exception(f"[ERROR] An exception occurred in get_probe_options_per_interface, Getting probe options for an interface")
+        status = False
+        return old_probe_configs_dict, status
+    status = True
+    return old_probe_configs_dict, status
 
-    return old_probe_configs_dict
-
-def get_probe_options_non_interface_specific(config_attributes_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger):
+def get_probe_options_non_interface_specific(config_attributes_list, rem_con, old_probe_configs_dict, options_type, logger):
     """
     For each config attribute, send a command the probe to get the specific probe-wide non-interface specific settings.
     The setting for each config attribute will be used to fill in the attributes for the old_probe_configs_dict.
     :config_attributes_list: A list of attribute names to be entered into the old_probe_configs_dict.
-    :index_counter: An integer counter used to access each config element as we loop through the interfaces.
     :rem_con: An instance of the remote console shell session to the probe.
     :old_probe_configs_dict: A dictionary of all the probe configurations.
     :options_type: In this case, interface_non_specific to indicate that we need send one command for each config attribute.
-    :return: False if any command fails, The filled in old_probe_configs_dict if all commands pass.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
+    :return: The filled in old_probe_configs_dict and status = True if all commands pass.
+    Return the old_probe_configs_dict and status = False if any errors occur.
     """
     try:
         for config_attribute in config_attributes_list:
-            formatted_options_configs = [] # Reset the list each time we loop to the next config_attribute.
             command = "get " + config_attribute + "\n"
-            #print(f'\ncommand is: {command}')
-            output = execute_single_command_on_remote(command, rem_con, logger)
+            output = execute_single_command_on_remote(command, rem_con, logger) # Run the command.
             if output == False:
                 logger.error(f'[ERROR] get_probe_options_non_interface_specific, Console command: {command} failed')
-                return False
-            options_configs = output.splitlines()
-
-            for options_config in options_configs:
-                #print(f'\noptions_config is: {options_config}')
-                options_config_split = options_config.split()
-                #print(f'\noptions_config_split is: {options_config_split}')
-                options_config_new = " ".join(options_config_split)
-                #print(f'\noptions_config_new is: {options_config_new}')
-                formatted_options_configs.append(options_config_new)
-            # print(f'\nformatted_options_configs is: {formatted_options_configs}')
-            if config_attribute == 'config_download':
-                config_attribute_verbose = formatted_options_configs[index_counter].partition('config_download : ')[2].lower()
-            elif config_attribute == 'probe_mode':
-                config_attribute_verbose = formatted_options_configs[index_counter].partition('Probe Mode : ')[2].lower()
-            elif config_attribute == 'vq payload':
-                config_attribute_verbose = formatted_options_configs[index_counter].partition('vq payload: ')[2].lower()
-            elif config_attribute == 'asi_mode':
-                config_attribute_verbose = formatted_options_configs[index_counter].partition('asi_mode is currently set to ')[2].lower()
-            #print(f'\nconfig_attribute_verbose is: {config_attribute_verbose}')
-            old_probe_configs_dict[options_type][0][config_attribute] = config_attribute_verbose
+                status = False
+                return old_probe_configs_dict, status
+            formatted_options_configs, status = get_formatted_options_configs(output, logger)
+            if status == False:
+                logger.error(f'[ERROR] get_probe_options_non_interface_specific, get_formatted_options_configs failed')
+                return old_probe_configs_dict, status
+            old_probe_configs_dict, status = process_output_non_interface(old_probe_configs_dict, options_type, config_attribute, formatted_options_configs, logger)
+            if status == False:
+                logger.error(f'[ERROR] get_probe_options_non_interface_specific, process_output_non_interface failed')
+                return old_probe_configs_dict, status
     except Exception:
-        logger.exception(f"Fatal error: get_probe_options_non_interface_specific, Getting probe options has failed")
-        return False
+        logger.exception(f"[ERROR] An exception occurred in get_probe_options_non_interface_specific, Getting probe options")
+        status = False
+        return old_probe_configs_dict, status
+    status = True
+    return old_probe_configs_dict, status
 
-    return old_probe_configs_dict
-
-def get_probe_options_single_command_multi_interface(config_attributes_list, interface_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger):
+def get_probe_options_single_command_multi_interface(config_attributes_list, interface_list, rem_con, old_probe_configs_dict, options_type, logger):
     """
     This is another example of how get <setting> returns a wildly different format from other get commands.
     In this case a single get command returns a list of each setting for each interface.
     The list of options returned by the probe will be used to fill in the attributes for the old_probe_configs_dict.
     :config_attributes_list: A list of attribute names to be entered into the old_probe_configs_dict.
     :interface_list: A list of probe monitor interface numbers that are available.
-    :index_counter: An integer counter used to access each config element as we loop through the interfaces.
     :rem_con: An instance of the remote console shell session to the probe.
     :old_probe_configs_dict: A dictionary of all the probe configurations.
     :options_type: The name of the probe options that we want to fetch from the probe.
-    :return: False if any command fails, The filled in old_probe_configs_dict if all commands pass.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
+    :return: The filled in old_probe_configs_dict and status = True if all commands pass.
+    Return the old_probe_configs_dict and status = False if any errors occur.
     """
     try:
         for config_attribute in config_attributes_list:
-            formatted_options_configs = [] # Start with an empty list.
-            loop_counter = index_counter # This is the starting point for reading elements from the formatted_options_configs.
+            config_attributes_list_short = [] # create an empty list to hold a single config_attribute rather than the whole list.
             command = "get " + config_attribute + "\n" # One command returns a list of interface settings to parse through.
             #print(f'\ncommand is: {command}')
             output = execute_single_command_on_remote(command, rem_con, logger)
             if output == False:
                 logger.error(f'[ERROR] get_probe_options_single_command_multi_interface, Console command: {command} failed')
-                return False
-            options_configs = output.splitlines()
-            for options_config in options_configs:
-                options_config_split = options_config.split()
-                options_config_new = " ".join(options_config_split)
-                formatted_options_configs.append(options_config_new)
+                status = False
+                return old_probe_configs_dict, status
+            formatted_options_configs, status = get_formatted_options_configs(output, logger)
+            if status == False:
+                logger.error(f'[ERROR] get_probe_options_per_interface, get_formatted_options_configs failed')
+                return old_probe_configs_dict, status
             #print(f'\nformatted_options_configs is: {formatted_options_configs}')
+            config_attributes_list_short.append(config_attribute) # In this case, we want to process each config_attribute...
+            # one by one rather than passing the whole config attributes list to process_output_per_interface.
             for interface in interface_list: # In this case, loop through each line returned for each interface.
-                old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_configs[loop_counter].partition(interface + ' ')[2]
-                loop_counter += 1 # Increment the formatted_options_configs index number we use for each config_attribute loop.
+                old_probe_configs_dict, status = process_output_per_interface(config_attributes_list_short, old_probe_configs_dict, options_type, formatted_options_configs, interface, logger)
+                if status == False:
+                    logger.error(f'[ERROR] get_probe_options_per_interface, process_output_per_interface failed')
+                    return old_probe_configs_dict, status
     except Exception:
-        logger.exception(f"Fatal error: get_probe_options_single_command_multi_interface, Get config attribute for multi-interface failed")
-        return False
-    return old_probe_configs_dict
+        logger.exception(f"[ERROR] An exception occurred in get_probe_options_single_command_multi_interface, Get config attribute for multi-interface")
+        status = False
+        return old_probe_configs_dict, status
+    status = True
+    return old_probe_configs_dict, status
 
-def get_probe_security_options(config_attributes_list, index_counter, rem_con, old_probe_configs_dict, logger):
+def get_probe_security_options(config_attributes_list, options_type, rem_con, old_probe_configs_dict, logger):
     """
     There is no 'get security_options' cli command, so we must get these setting directly from the menu.
     The list of options returned by the probe will be used to fill in the attributes for the old_probe_configs_dict.
     :config_attributes_list: A list of attribute names to be entered into the old_probe_configs_dict.
-    :index_counter: An integer counter used to access each config element as we loop through the interfaces.
+    :options_type: The options category to enter into the localconsole menu (security_options in this case).
     :rem_con: An instance of the remote console shell session to the probe.
     :old_probe_configs_dict: A dictionary of all the probe configurations.
-    :return: False if any command fails, The filled in old_probe_configs_dict if all commands pass.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
+    :return: The filled in old_probe_configs_dict and status = True if all commands pass.
+    Return the old_probe_configs_dict and status = False if any errors occur.
     """
-
-    formatted_options_configs = [] # Start with an empty list.
-    loop_counter = index_counter # This is the starting point for reading elements from the formatted_options_configs.
     try:
         command = "quit\n" # Get out of the command line and back to the main menu
         output = execute_single_command_on_remote(command, rem_con, logger)
         if output == False:
             logger.error(f'[ERROR] get_probe_security_options, Console command: {command} failed')
-            return False
+            status = False
+            return old_probe_configs_dict, status
         if 'Probe IP V4 address' not in output:
             logger.error(f'[ERROR] get_probe_security_options, Console command: {command} has Unexpected output: {output}')
-            return False
+            status = False
+            return old_probe_configs_dict, status
 
         command = "13\n" # Get into the security options menu
         output = execute_single_command_on_remote(command, rem_con, logger)
         if output == False:
             logger.error(f'[ERROR] get_probe_security_options, Console command: {command} failed')
-            return False
+            status = False
+            return old_probe_configs_dict, status
         if 'Secure Access Menu:' not in output:
             logger.error(f'[ERROR] get_probe_security_options, Console command: {command} has Unexpected output: {output}')
-            return False
+            status = False
+            return old_probe_configs_dict, status
 
-        options_configs = output.splitlines()
-        for options_config in options_configs:
-            options_config_split = options_config.split()
-            options_config_new = " ".join(options_config_split)
-            formatted_options_configs.append(options_config_new)
         for config_attribute in config_attributes_list:
-            if config_attribute == 'capture_slice_size':
-                #print(f"formatted_options_configs[loop_counter].partition('Change capture slice size : ')[2] is: {formatted_options_configs[loop_counter].partition('Change capture slice size : ')[2]}")
-                old_probe_configs_dict['security_options'][0][config_attribute] = formatted_options_configs[loop_counter].partition('Change capture slice size : ')[2]
-            if config_attribute == 'data_capture':
-                #print(f"formatted_options_configs[loop_counter].partition('Toggle data capture : ')[2] is: {formatted_options_configs[loop_counter].partition('Toggle data capture : ')[2]}")
-                old_probe_configs_dict['security_options'][0][config_attribute] = formatted_options_configs[loop_counter].partition('Toggle data capture : ')[2].lower()
-            loop_counter += 1
+            formatted_options_configs, status = get_formatted_options_configs(output, logger)
+            if status == False:
+                logger.error(f'[ERROR] get_probe_options, get_formatted_options_configs failed')
+                return old_probe_configs_dict, status
+            old_probe_configs_dict, status = process_output_non_interface(old_probe_configs_dict, options_type, config_attribute, formatted_options_configs, logger)
+            if status == False:
+                logger.error(f'[ERROR] get_probe_options, process_output_non_interface failed')
+                return old_probe_configs_dict, status
     except Exception:
-        logger.exception(f"Fatal error: get_probe_security_options, Getting the Security Options menu failed")
-        return False
+        logger.exception(f"[ERROR] An exception occurred in get_probe_security_options, Getting the Security Options menu")
+        status = False
+        return old_probe_configs_dict, status
 
-    return old_probe_configs_dict
+    status = True
+    return old_probe_configs_dict, status
 
+def get_probe_interface_list(old_probe_configs_dict, options_type, rem_con, logger):
+    """
+    Get the list of probe interfaces via the localconsole menu option 7.
+    Validate the output info returned and put the interface number into a list that we can use to loop on later.
+    Add the interface number and description to the old_probe_configs_dict.
+    :config_attributes_list: A list of attribute names to be entered into the old_probe_configs_dict.
+    :old_probe_configs_dict: A dictionary of all the probe configurations.
+    :options_type: The options category to enter into the localconsole menu (security_options in this case).
+    :rem_con: An instance of the remote console shell session to the probe.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
+    :return: The list of interface numbers and status = True if all commands pass.
+    Return and empty interface list and status = False if any errors occur.
+    """
+    interface_list = [] # Initialize an empty list to put our available monitor interfaces into.
+    try:
+        command = "localconsole\n"
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            logger.error("[ERROR] get_probe_interface_list - command 'localconsole' failed")
+            status = False
+            return old_probe_configs_dict, interface_list, status
+        output = ""
+        command = "7\n" # We need to know what interfaces exist on this probe. Enter interface options menu.
+        #print('Getting Interfaces...', end="")
+        output = execute_single_command_on_remote(command, rem_con, logger) # Send option 7 to the localconsole menu.
+        if output == False:
+            logger.error("[ERROR] get_probe_interface_list - option '7' command, interface options failed")
+            status = False
+            return old_probe_configs_dict, interface_list, status
+
+            formatted_options_configs, status = get_formatted_options_configs(output, logger)
+            if status == False:
+                logger.error(f'[ERROR] get_probe_options, get_formatted_options_configs failed')
+                return old_probe_configs_dict, interface_list, status
+            #print(f'\nformatted_options_configs is: {formatted_options_configs}')
+            for formatted_option in formatted_options_configs:
+                # Add the interface number to the list of monitor interfaces.
+                if formatted_option == '7': # This is the command itself, ignore it.
+                    continue
+                elif '[FDX]' in formatted_option: # Validate output data.
+                    interface_num = formatted_option[1:3].strip()
+                    interface_list.append(interface_num) # Get the interface number.
+                    # Add inf # and description to dictionary as a key:value pair.
+                    # Note that if you don't convert to integer, the sort order by default is wrong.
+                    old_probe_configs_dict[options_type][0][int(interface_num)] = formatted_option[4:]
+                elif '[HDX]' in formatted_option: # Validate output data.
+                    interface_num = formatted_option[1:3].strip()
+                    interface_list.append(interface_num) # Get the interface number.
+                    old_probe_configs_dict[options_type][0][int(interface_num)] = formatted_option[4:]
+                elif '[MDX]' in formatted_option: # Validate output data.
+                    interface_num = formatted_option[1:3].strip()
+                    interface_list.append(interface_num) # Get the interface number.
+                    old_probe_configs_dict[options_type][0][int(interface_num)] = formatted_option[4:]
+                elif 'AGGREGATE IFN' in formatted_option: # Validate output data.
+                    interface_num = formatted_option[1:3].strip()
+                    interface_list.append(interface_num) # Get the interface number.
+                    old_probe_configs_dict[options_type][0][int(interface_num)] = formatted_option[4:]
+                elif '[PFS_FDX]' in formatted_option: # Validate output data.
+                    interface_num = formatted_option[1:3].strip()
+                    interface_list.append(interface_num) # Get the interface number.
+                    old_probe_configs_dict[options_type][0][int(interface_num)] = formatted_option[4:]
+                elif '[PFS_HDX]' in formatted_option: # Validate output data.
+                    interface_num = formatted_option[1:3].strip()
+                    interface_list.append(interface_num) # Get the interface number.
+                    old_probe_configs_dict[options_type][0][int(interface_num)] = formatted_option[4:]
+                else:
+                    print(f'[ERROR] There is an interface mode type that I do not recognize: {formatted_option}')
+                    logger.error(f'[ERROR] There is an interface mode type that I do not recognize: {formatted_option}')
+                    status = False
+                    return old_probe_configs_dict, interface_list, status
+
+            #old_probe_configs_dict[options_type][0] = {k: old_probe_configs_dict[options_type][0][k] for k in sorted(old_probe_configs_dict[options_type][0])}
+        command = "99\n" # Return to the main localconsole menu page.
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            logger.error("[ERROR] get_probe_interface_list - command '99' return to main menu failed")
+            status = False
+            return old_probe_configs_dict, interface_list, status
+
+        command = "11\n" # Enter the command line mode in localconsole.
+        output = execute_single_command_on_remote(command, rem_con, logger)
+        if output == False:
+            logger.error("[ERROR] get_probe_interface_list - command '11' return to main menu failed")
+            status = False
+            return old_probe_configs_dict, interface_list, status
+        status = True
+        return old_probe_configs_dict, interface_list, status
+    except Exception:
+        logger.exception(f"[ERROR] An exception occurred in get_probe_interface_list")
+        status = False
+        return old_probe_configs_dict, interface_list, status
 
 def do_agent_reset(command, rem_con, logger):
     """
@@ -592,6 +829,7 @@ def do_agent_reset(command, rem_con, logger):
     the localconsole menu, or a 'do reset' command if not responding to a reset agent prompt from localconsole.
     :command: Either 'y\n' if responding to a prompt or 'do reset\n' if not responding to a prompt.
     :rem_con: An instance of the remote console shell session to the probe.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: False if any command fails, True if the agent resets and we get the localconsole menu back.
     """
     try:
@@ -665,7 +903,7 @@ def do_agent_reset(command, rem_con, logger):
                 logger.error(f'[ERROR] do_agent_reset, Console command: {command} has Unexpected output: {output}')
                 return False
     except Exception:
-        logger.exception(f"Fatal error: do_agent_reset, An error occurred while attempting to reset the agent")
+        logger.exception(f"[ERROR] do_agent_reset, An exception occurred while attempting to reset the agent")
         return False
 
     return True
@@ -673,9 +911,10 @@ def do_agent_reset(command, rem_con, logger):
 def set_probe_other_interface_specific(old_probe_configs_dict, interface_list, rem_con, logger):
     """
     For each monitor interface, set the probe config parameters to match the desired POC settings.
+    :old_probe_configs_dict: A dictionary of all the probe configurations.
     :interface_list: A list of probe monitor interface numbers that are available.
     :rem_con: An instance of the remote console shell session to the probe.
-    :old_probe_configs_dict: A dictionary of all the probe configurations.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: False if any command fails, True if all commands pass.
     """
     try:
@@ -722,7 +961,7 @@ def set_probe_other_interface_specific(old_probe_configs_dict, interface_list, r
                     logger.error(f'[ERROR] set_probe_other_interface_specific, Console command: {command} has Unexpected output: {output}')
                     return False
     except Exception:
-        logger.exception(f"Fatal error: set_probe_other_interface_specific, An error has occurred in set probe other")
+        logger.exception(f"[ERROR] set_probe_other_interface_specific, An exception has occurred in set probe other")
         return False
     # We need to stay in the command line mode for the next action.
     return True
@@ -730,9 +969,10 @@ def set_probe_other_interface_specific(old_probe_configs_dict, interface_list, r
 def set_probe_asi_interface_specific(old_probe_configs_dict, interface_list, rem_con, logger):
     """
     For each monitor interface, set the asi config parameters to match the desired POC settings.
+    :old_probe_configs_dict: A dictionary of all the probe configurations.
     :interface_list: A list of probe monitor interface numbers that are available.
     :rem_con: An instance of the remote console shell session to the probe.
-    :old_probe_configs_dict: A dictionary of all the probe configurations.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: False if any command fails, True if all commands pass.
     """
     try:
@@ -946,16 +1186,17 @@ def set_probe_asi_interface_specific(old_probe_configs_dict, interface_list, rem
                     logger.error(f'[ERROR] set_probe_asi_interface_specific, Console command: {command} has Unexpected output: {output}')
                     return False
     except Exception:
-        logger.exception(f"Fatal error: set_probe_asi_interface_specific, An error has occurred while setting ASI probe configurations")
+        logger.exception(f"[ERROR] set_probe_asi_interface_specific, An exception has occurred while setting ASI probe configurations")
         return False
     return True
 
 def set_probe_options_per_interface(old_probe_configs_dict, interface_list, rem_con, logger):
     """
     For each monitor interface, set the interface options config parameters to match the desired POC settings.
+    :old_probe_configs_dict: A dictionary of all the probe configurations.
     :interface_list: A list of probe monitor interface numbers that are available.
     :rem_con: An instance of the remote console shell session to the probe.
-    :old_probe_configs_dict: A dictionary of all the probe configurations.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: False if any command fails, True if all commands pass.
     """
 
@@ -1178,8 +1419,9 @@ def set_probe_options_per_interface(old_probe_configs_dict, interface_list, rem_
 def set_probe_options_non_interface_specific(old_probe_configs_dict, rem_con, logger):
     """
     Set the major, probe-wide non-interface specific settings. Do agent resets as needed.
-    :rem_con: An instance of the remote console shell session to the probe.
     :old_probe_configs_dict: A dictionary of all the probe configurations.
+    :rem_con: An instance of the remote console shell session to the probe.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: False if any command fails, True if all commands pass.
     """
     try:
@@ -1203,6 +1445,13 @@ def set_probe_options_non_interface_specific(old_probe_configs_dict, rem_con, lo
 
         if old_probe_configs_dict['non_interface_specific'][0]['config_download'] != 'off':
             command = "set config_download off\n"
+            output = execute_single_command_on_remote(command, rem_con, logger)
+            if output == False:
+                logger.error(f'[ERROR] set_probe_options_non_interface_specific, Console command: {command} failed')
+                return False
+
+        if old_probe_configs_dict['non_interface_specific'][0]['vq dtmf_events'] != 'on':
+            command = "set vq dtmf_events on\n"
             output = execute_single_command_on_remote(command, rem_con, logger)
             if output == False:
                 logger.error(f'[ERROR] set_probe_options_non_interface_specific, Console command: {command} failed')
@@ -1277,7 +1526,7 @@ def set_probe_options_non_interface_specific(old_probe_configs_dict, rem_con, lo
         else:
             print('Done')
     except Exception:
-        logger.exception(f"Fatal error: set_probe_options_non_interface_specific, An error has occurred while setting probe options non interface specific")
+        logger.exception(f"[ERROR] set_probe_options_non_interface_specific, An exception has occurred while setting probe options non interface specific")
         return False
 
     return True
@@ -1285,8 +1534,9 @@ def set_probe_options_non_interface_specific(old_probe_configs_dict, rem_con, lo
 def set_probe_software_options(old_probe_configs_dict, rem_con, logger):
     """
     Set the probe software options settings.
-    :rem_con: An instance of the remote console shell session to the probe.
     :old_probe_configs_dict: A dictionary of all the probe configurations.
+    :rem_con: An instance of the remote console shell session to the probe.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: False if any command fails, True if all commands pass.
     """
     try:
@@ -1348,7 +1598,7 @@ def set_probe_software_options(old_probe_configs_dict, rem_con, logger):
             logger.error(f'[ERROR] set_probe_software_options, Console command: {command} has Unexpected output: {output}')
             return False
     except Exception:
-        logger.exception(f"Fatal error: set_probe_software_options, An error has occurred while setting probe software options")
+        logger.exception(f"[ERROR] set_probe_software_options, An exception has occurred while setting probe software options")
         return False
 
     return True
@@ -1356,8 +1606,9 @@ def set_probe_software_options(old_probe_configs_dict, rem_con, logger):
 def set_probe_protocol_options(old_probe_configs_dict, rem_con, logger):
     """
     Set the probe protocol options settings.
-    :rem_con: An instance of the remote console shell session to the probe.
     :old_probe_configs_dict: A dictionary of all the probe configurations.
+    :rem_con: An instance of the remote console shell session to the probe.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: False if any command fails, True if all commands pass.
     """
     try:
@@ -1439,15 +1690,16 @@ def set_probe_protocol_options(old_probe_configs_dict, rem_con, logger):
             logger.error(f'[ERROR] set_probe_protocol_options, Console command: {command} has Unexpected output: {output}')
             return False
     except Exception:
-        logger.exception(f"Fatal error: set_probe_protocol_options, An error has occurred while setting probe protocol options")
+        logger.exception(f"[ERROR] set_probe_protocol_options, An exception has occurred while setting probe protocol options")
         return False
     return True
 
 def set_probe_http_options(old_probe_configs_dict, rem_con, logger):
     """
     Set the probe protocol options settings.
-    :rem_con: An instance of the remote console shell session to the probe.
     :old_probe_configs_dict: A dictionary of all the probe configurations.
+    :rem_con: An instance of the remote console shell session to the probe.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: False if any command fails, True if all commands pass.
     """
     try:
@@ -1591,7 +1843,7 @@ def set_probe_http_options(old_probe_configs_dict, rem_con, logger):
                 return False
         # Stay in the command line mode for the next function.
     except Exception:
-        logger.exception(f"Fatal error: set_probe_http_options, An error has occurred while setting probe http options")
+        logger.exception(f"[ERROR] set_probe_http_options, An exception has occurred while setting probe http options")
         return False
 
     return True
@@ -1599,8 +1851,9 @@ def set_probe_http_options(old_probe_configs_dict, rem_con, logger):
 def set_probe_security_options(old_probe_configs_dict, rem_con, logger):
     """
     Set the probe security options settings.
-    :rem_con: An instance of the remote console shell session to the probe.
     :old_probe_configs_dict: A dictionary of all the probe configurations.
+    :rem_con: An instance of the remote console shell session to the probe.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: False if any command fails, True if all commands pass.
     """
     try:
@@ -1661,15 +1914,16 @@ def set_probe_security_options(old_probe_configs_dict, rem_con, logger):
             logger.error(f'[ERROR] set_probe_security_options, Console command: {command} has Unexpected output: {output}')
             return False
     except Exception:
-        logger.exception(f"Fatal error: set_probe_security_options, An error has occurred while setting probe security options")
+        logger.exception(f"[ERROR] set_probe_security_options, An exception has occurred while setting probe security options")
         return False
     return True
 
 def set_probe_agent_options(old_probe_configs_dict, rem_con, logger):
     """
     Set the probe agent (not related to interfaces) specific settings.
-    :rem_con: An instance of the remote console shell session to the probe.
     :old_probe_configs_dict: A dictionary of all the probe configurations.
+    :rem_con: An instance of the remote console shell session to the probe.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: False if any command fails, True if all commands pass.
     """
     try:
@@ -1774,7 +2028,7 @@ def set_probe_agent_options(old_probe_configs_dict, rem_con, logger):
             logger.error(f'[ERROR] set_probe_agent_options, Console command: {command} has Unexpected output: {output}')
             return False
     except Exception:
-        logger.exception(f"Fatal error: set_probe_agent_options, An error occurred while setting the probe agent options")
+        logger.exception(f"[ERROR] set_probe_agent_options, An exception occurred while setting the probe agent options")
         return False
     return True
 
@@ -1786,9 +2040,10 @@ def set_probe_configs(old_probe_configs_dict, interface_list, rem_con, logger):
     match the desired poc settings. If there is a delta, the probe configuration is modified until all
     the desired settings match what is in the probe. Depending on what needs to be set, there may be one
     or more agent reset operations.
-    :rem_con: An instance of the remote console shell session to the probe.
     :old_probe_configs_dict: A dictionary of the current probe settings used to look for deltas to the
     desired poc settings.
+    :rem_con: An instance of the remote console shell session to the probe.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: False if any command fails, True if all settings are successfully modified to match the
     desired poc settings.
     """
@@ -1892,7 +2147,7 @@ def set_probe_configs(old_probe_configs_dict, interface_list, rem_con, logger):
         else:
             print('Done')
     except Exception:
-        logger.exception(f"Fatal error: set_probe_configs, An error occurred while setting the probe configs")
+        logger.exception(f"[ERROR] set_probe_configs, An exception occurred while setting the probe configs")
         return False
 
     return True
@@ -1902,54 +2157,29 @@ def gather_probe_configs(logger, rem_con):
     Sends a series of commands to the remote console and gathers the responses for processing.
     The responses will be used to fill in the attributes for the old_probe_configs_dict.
     :rem_con: An instance of the remote console shell session to the probe.
-    :return: False if any command fails, The filled in old_probe_configs_dict and the interface_list if all commands pass.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
+    :return: The filled in old_probe_configs_dict, the interface_list and status = True if all commands pass.
+    Return the old_probe_configs_dict, the interface list and status = False if any errors occur.
     """
 
-    print('Gathering current probe configurations for backup')
+    print('[INFO] Gathering current probe configurations for backup')
     logger.info('[INFO] Gathering current probe configurations...')
 
     try:
         # Initialize an empty dictionary to hold our probe config params.
-        old_probe_configs_dict = {'interface_options': [{}], 'agent_configs': [{}], 'agent_options': [{}], 'software_options': [{}],
+        old_probe_configs_dict = {'interface_list': [{}], 'interface_options': [{}], 'agent_configs': [{}], 'agent_options': [{}], 'software_options': [{}],
                                 'protocol_options': [{}], 'http': [{}], 'asi': [{}], 'interface_specific': [{}],
                                 'non_interface_specific': [{}], 'security_options': [{}]}
 
-        command = "localconsole\n"
-        output = execute_single_command_on_remote(command, rem_con, logger)
-        if output == False:
-            logger.error("[ERROR] Gather probe configs, basic menu - command 'localconsole' failed")
-            return False
-        output = ""
-        command = "7\n" # We need to know what interfaces exist on this probe. Enter interface options menu.
-        print('\rGetting Interfaces...', end="")
-        output = execute_single_command_on_remote(command, rem_con, logger) # Send option 7 to the localconsole menu.
-        if output == False:
-            logger.error("[ERROR] Gather probe configs, interface menu - command '7' interface options failed")
-            return False
+        options_type = 'interface_list'
+        print('\rGetting Interface List...', end="")
+        # Get the list of monitor interfaces, add them to the old_probe_configs_dict and return a numerical list of interface numbers.
+        old_probe_configs_dict, interface_list, status = get_probe_interface_list(old_probe_configs_dict, options_type, rem_con, logger)
+        if status == False:
+            logger.error("[ERROR] Gather probe configs, Getting Probe Interface List failed")
+            return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
-        interface_list = [] # Initialize an empty list to put our available monitor interfaces into.
-        interface_configs = output.splitlines()
-        for interface_config in interface_configs:
-            interface_config_split = interface_config.split()
-            interface_config_new = " ".join(interface_config_split)
-            if '[99] Go Back to Main Menu' in interface_config_new: # We are at the end of the page. Break.
-                break
-            if '-ETHERNET' in interface_config_new: # Add the interface number to the list of monitor interfaces.
-                interface_list.append(interface_config_new[1:3].strip())
-
-        command = "99\n" # Return to the main localconsole menu page.
-        output = execute_single_command_on_remote(command, rem_con, logger)
-        if output == False:
-            logger.error("[ERROR] Gather probe configs, interface menu - command '99' return to main menu failed")
-            return False
-
-        command = "11\n" # Enter the command line mode in localconsole.
-        output = execute_single_command_on_remote(command, rem_con, logger)
-        if output == False:
-            logger.error("[ERROR] Gather probe configs, interface menu - command '11' return to main menu failed")
-            return False
-
         # Difficult not to hard code these lists of attribute names as the names are not consistent in...
         # the probe itself as to underscores or spaces or how many words are in the attribute name.
         config_attributes_list = ['power_alarm_util', 'power_alarm_resp', 'admin_shutdown', 'Data w/o Control Tcm',
@@ -1957,15 +2187,13 @@ def gather_probe_configs(logger, rem_con):
                                 'vifn_discovery', 'vifn_mode', 'reverse_ports', 'HTTP Mode', 'M3UA Table',
                                 'enable xDR', 'Tunnel Parsing', 'interface type', 'auxiliary interfaces', 'Data w/o Control',
                                 'Interface Mode', 'Configure Tunnel Termination']
-        index_counter = 4 # The starting index of the first valid element in formatted_interface_configs.
         options_type = 'interface_options'
-        #print("\r                                             ", end='') # Clear the progress print line before we return.
         print('\rGetting Interface Options...', end="")
         # Get the whole list of interface options settings for each monitor interface and add them to the old_probe_configs_dict.
-        old_probe_configs_dict = get_probe_options_per_interface(config_attributes_list, interface_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger)
-        if old_probe_configs_dict == False:
+        old_probe_configs_dict, status = get_probe_options_per_interface(config_attributes_list, interface_list, rem_con, old_probe_configs_dict, options_type, logger)
+        if status == False:
             logger.error("[ERROR] Gather probe configs, Getting Interface Options failed")
-            return False
+            return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
 
@@ -1973,58 +2201,50 @@ def gather_probe_configs(logger, rem_con):
                                 'nvram size', 'agent_location', 'agent_contact', 'agent_name', 'read_community',
                                 'write_community', 'Probe Communication Mode', 'IP V4 address', 'MAC Address',
                                 'config_server', 'serial_number', 'nsprobe_type', 'kernel']
-        index_counter = 2 # The starting index of the first valid element in formatted_interface_configs.
         options_type = 'agent_configs'
-        #print("\r                                             ", end='') # Clear the progress print line before we return.
         print('\rGetting Agent Configs...', end="")
         # Get the whole list of probe agent configs settings and add them to the old_probe_configs_dict.
-        old_probe_configs_dict = get_probe_options(config_attributes_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger)
-        if old_probe_configs_dict == False:
+        old_probe_configs_dict, status = get_probe_options(config_attributes_list, rem_con, old_probe_configs_dict, options_type, logger)
+        if status == False:
             logger.error("[ERROR] Gather probe configs, Getting Agent Configs failed")
-            return False
+            return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
 
         config_attributes_list = ['watchdog', 'auto_reboot', 'timestamp_ns', 'burst_advisor_peak',
                                 'Infinistream Console Support', 'Traffic Violations', 'nGeniusONE Managed',
                                 'Health Monitoring', 'Eth0 GRE Monitoring', 'Network Analyzer Support']
-        index_counter = 4 # The starting index of the first valid element in formatted_interface_configs.
         options_type = 'agent_options'
-        #print("\r                                             ", end='') # Clear the progress print line before we return.
         print('\rGetting Agent Options...', end="")
         # Get the whole list of probe agent options settings and add them to the old_probe_configs_dict.
-        old_probe_configs_dict = get_probe_options(config_attributes_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger)
-        if old_probe_configs_dict == False:
+        old_probe_configs_dict, status = get_probe_options(config_attributes_list, rem_con, old_probe_configs_dict, options_type, logger)
+        if status == False:
             logger.error("[ERROR] Gather probe configs, getting Agent Options failed")
-            return False
+            return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
 
         config_attributes_list = ['Response Time Monitor', 'NL and AL Host', 'NL and AL Conversation',
                                 'SBA Priority']
-        index_counter = 2 # The starting index of the first valid element in formatted_interface_configs.
         options_type = 'software_options'
-        #print("\r                                             ", end='') # Clear the progress print line before we return.
         print('\rGetting Software Options...', end="")
         # Get the whole list of probe software options settings and add them to the old_probe_configs_dict.
-        old_probe_configs_dict = get_probe_options(config_attributes_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger)
-        if old_probe_configs_dict == False:
+        old_probe_configs_dict, status = get_probe_options(config_attributes_list, rem_con, old_probe_configs_dict, options_type, logger)
+        if status == False:
             logger.error("[ERROR] Gather probe configs, Getting Software Options failed")
-            return False
+            return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
 
         config_attributes_list = ['Pattern Matching', 'CORBA', 'Conversation Port Discovery',
                                 'Skype Pattern Matching', 'Extended FIS', 'Voice and Video Quality']
-        index_counter = 2 # The starting index of the first valid element in formatted_interface_configs.
         options_type = 'protocol_options'
-        #print("\r                                             ", end='') # Clear the progress print line before we return.
         print('\rGetting Protocol Options...', end="")
         # Get the whole list of protocol options settings and add them to the old_probe_configs_dict.
-        old_probe_configs_dict = get_probe_options(config_attributes_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger)
-        if old_probe_configs_dict == False:
+        old_probe_configs_dict, status = get_probe_options(config_attributes_list, rem_con, old_probe_configs_dict, options_type, logger)
+        if status == False:
             logger.error("[ERROR] Gather probe configs, Getting Protocol Options failed")
-            return False
+            return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
 
@@ -2032,15 +2252,13 @@ def gather_probe_configs(logger, rem_con):
                                 'http my_nw_url_discovery', 'http parse_xcap', 'http parse_stir', 'http ssl_quic_subscr_info',
                                 'http use_xff', 'http use_xff_multiple_clients', 'http use_client_ip_field',
                                 'http use_x_true_client_ip', 'http use_x_real_ip_field']
-        index_counter = 2 # The starting index of the first valid element in formatted_interface_configs.
         options_type = 'http'
-        #print("\r                                             ", end='') # Clear the progress print line before we return.
         print('\rGetting HTTP...', end="")
         # Get the whole list of probe http settings and add them to the old_probe_configs_dict.
-        old_probe_configs_dict = get_probe_options(config_attributes_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger)
-        if old_probe_configs_dict == False:
+        old_probe_configs_dict, status = get_probe_options(config_attributes_list, rem_con, old_probe_configs_dict, options_type, logger)
+        if status == False:
             logger.error("[ERROR] Gather probe configs, Getting HTTP failed")
-            return False
+            return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
 
@@ -2049,66 +2267,57 @@ def gather_probe_configs(logger, rem_con):
                                 'conv ports', 'conv qos', 'la_burst', 'la_type', 'host_activity',
                                 'htt', 'ksi 1min', 'ksi client_ip', 'subscriber', '1-min', '15-sec',
                                 'url_disc_table']
-        index_counter = 3 # The starting index of the first valid element in the formatted configs returned by the probe.
         options_type = 'asi'
-        #print("\r                                             ", end='') # Clear the progress print line before we return.
         print('\rGetting ASI...', end="")
         # Get the whole list of probe asi settings per interface and add them to the old_probe_configs_dict.
-        old_probe_configs_dict = get_probe_options_per_interface(config_attributes_list, interface_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger)
-        if old_probe_configs_dict == False:
+        old_probe_configs_dict, status = get_probe_options_per_interface(config_attributes_list, interface_list, rem_con, old_probe_configs_dict, options_type, logger)
+        if status == False:
             logger.error("[ERROR] Gather probe configs, Getting ASI failed")
-            return False
+            return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
 
         config_attributes_list = ['skt_vlan_enable', 'span_duplicate', 'ssl_sni']
-        index_counter = 2 # The starting index of the first valid element in the formatted configs returned by the probe.
         options_type = 'interface_specific'
-        #print("\r                                             ", end='') # Clear the progress print line before we return.
         print('\rGetting Interface Specific Options...', end="")
         # Get the whole list of probe interface specific settings and add them to the old_probe_configs_dict.
-        old_probe_configs_dict = get_probe_options_interface_specific(config_attributes_list, interface_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger)
-        if old_probe_configs_dict == False:
+        old_probe_configs_dict, status = get_probe_options_interface_specific(config_attributes_list, interface_list, rem_con, old_probe_configs_dict, options_type, logger)
+        if status == False:
             logger.error("[ERROR] Gather probe configs, Getting Interface Specific Options failed")
-            return False
+            return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
 
-        config_attributes_list = ['config_download', 'probe_mode', 'vq payload', 'asi_mode']
-        index_counter = 2 # The starting index of the first valid element in the formatted configs returned by the probe.
+        config_attributes_list = ['config_download', 'probe_mode', 'vq payload', 'vq dtmf_events', 'asi_mode']
         options_type = 'non_interface_specific'
-        #print("\r                                             ", end='') # Clear the progress print line before we return.
         print('\rGetting Non-Interface Specific Options...', end="")
         # Get each probe non-interface specific settings and add them to the old_probe_configs_dict.
-        old_probe_configs_dict = get_probe_options_non_interface_specific(config_attributes_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger)
-        if old_probe_configs_dict == False:
+        old_probe_configs_dict, status = get_probe_options_non_interface_specific(config_attributes_list, rem_con, old_probe_configs_dict, options_type, logger)
+        if status == False:
             logger.error("[ERROR] Gather probe configs, Getting Non-Interface Specific Options failed")
-            return False
+            return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
 
         config_attributes_list = ['community_type']
-        index_counter = 3 # The starting index of the first valid element in the formatted configs returned by the probe.
         options_type = 'interface_specific'
         #print("\r                                             ", end='') # Clear the progress print line before we return.
         print('\rGetting Community Type...', end="")
-        # Get each probe interface specific settings for each interface one-by-one and add them to the old_probe_configs_dict.
-        old_probe_configs_dict = get_probe_options_single_command_multi_interface(config_attributes_list, interface_list, index_counter, rem_con, old_probe_configs_dict, options_type, logger)
-        if old_probe_configs_dict == False:
+        old_probe_configs_dict, status = get_probe_options_single_command_multi_interface(config_attributes_list, interface_list, rem_con, old_probe_configs_dict, options_type, logger)
+        if status == False:
             logger.error("[ERROR] Gather probe configs, Getting Getting Community Type failed")
-            return False
+            return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
 
         config_attributes_list = ['capture_slice_size', 'data_capture']
-        index_counter = 11 # The starting index of the first valid element in the formatted configs returned by the probe.
-        #print("\r                                             ", end='') # Clear the progress print line before we return.
+        options_type = 'security_options'
         print('\rGetting Security Options...', end="")
         # Get each probe interface specific settings for each interface one-by-one and add them to the old_probe_configs_dict.
-        old_probe_configs_dict = get_probe_security_options(config_attributes_list, index_counter, rem_con, old_probe_configs_dict, logger)
-        if old_probe_configs_dict == False:
+        old_probe_configs_dict, status = get_probe_security_options(config_attributes_list, options_type, rem_con, old_probe_configs_dict, logger)
+        if status == False:
             logger.error("[ERROR] Gather probe configs, Getting Security Options failed")
-            return False
+            return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
 
@@ -2116,19 +2325,22 @@ def gather_probe_configs(logger, rem_con):
         output = execute_single_command_on_remote(command, rem_con, logger)
         if output == False:
             logger.error("[ERROR] Gather probe configs, exit command failed")
-            return False
-        #print("\r                                             ", end='') # Clear the progress print line before we return.
+            status = False
+            return old_probe_configs_dict, interface_list, status
     except Exception:
-        logger.exception(f"Fatal error: Gather probe configs, An error has occurred while gathering the probe configs")
-        return False
+        logger.exception(f"[ERROR] Gather probe configs, An exception has occurred while gathering the probe configs")
+        status = False
+        return old_probe_configs_dict, interface_list, status
 
-    return old_probe_configs_dict, interface_list
+    status = True
+    return old_probe_configs_dict, interface_list, status
 
 def write_config_to_json(config_filename, old_probe_configs_dict, logger):
     """
     Serialize the old_probe_configs_dict and write it out to a json file so we have a backup of the original config.
     :config_filename: The name of the json file that we want to save the probe configs to.
     :old_probe_configs_dict: The probe config dictionary that contains all the probe config settings.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: False if any command fails, True if the config is successfully written to the json file.
     """
 
@@ -2145,7 +2357,7 @@ def write_config_to_json(config_filename, old_probe_configs_dict, logger):
         logger.error(f'[ERROR] I/O error: {e.errno}:  {e.strerror}.')
         return False
     except Exception:
-        logger.exception(f"Fatal error: Unable to backup the probe config to the JSON config file: {config_filename}")
+        logger.exception(f"[ERROR] An exception occurred when attempting to backup the probe config to the JSON config file: {config_filename}")
         return False
     return True
 
@@ -2165,17 +2377,17 @@ def read_config_from_json(config_filename, logger):
         logger.error(f'[ERROR] I/O error: {e.errno}:  {e.strerror}.')
         return False
     except Exception:
-        logger.exception(f"Fatal error: Unable to read the JSON config file: {config_filename}")
+        logger.exception(f"[ERROR] An exception occurred when attempting to read the JSON config file: {config_filename}")
         return False
 
 def close_ssh_session(user_creds, client, rem_con, logger):
     """
     Close the remote console shell session to the probe.
     Close an SSH session to the probe using paramiko.
-    :param user_creds: A class instance that contains all the necessary connection parameters.
-    :param client: The SSH client instance.
-    :param rem_con: The remote console shell session instance.
-    :param logger: An instance of logger so we can log messages.
+    :user_creds: A class instance that contains all the necessary connection parameters.
+    :client: The SSH client instance.
+    :rem_con: The remote console shell session instance.
+    :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: True if successful, False if unsuccessful.
     """
     hostname = user_creds.probehostname
@@ -2186,13 +2398,26 @@ def close_ssh_session(user_creds, client, rem_con, logger):
         logger.info(f'[INFO] SSH connection to: {hostname} successfully closed.')
         return True
     except Exception:
-        logger.exception(f"Fatal error: Unable to close SSH connection to: {hostname}")
+        logger.exception(f"[ERROR] An exception occurred while attempting to close the SSH connection to: {hostname}")
         return False
 
 
 def main():
-
     #golden_probe_config_filename = 'golden_probe_config.json'
+    # Create a logger instance and write the date_time to a log file.
+    logger, log_filename = create_logging_function()
+    if logger == False: # Creating the logger instance has failed. Exit.
+        print("\n[CRITICAL] Main, Creating the logger instance has failed")
+        print('Exiting...')
+        sys.exit()
+
+    prog_version = '0.1'
+    status, is_set_config_true = flags_and_arguments(prog_version, logger)
+    if status == False: # Parsing the user entered flags or arguments has failed Exit.
+        logger.critical("[CRITICAL] Main, Parsing the user entered flags or arguments has failed")
+        print("\n[CRITICAL] Main, Parsing the user entered flags or arguments has failed")
+        print(f'Check the log file: {log_filename}. Exiting...')
+        sys.exit()
 
     # Hardcoding the filenames for encrypted credentials and the key file needed to decrypt the credentials.
     cred_filename = 'ProbeCredFile.ini'
@@ -2201,13 +2426,6 @@ def main():
         probekey_file = '.probekey.key' # hide the probekey file if Linux.
     else:
         probekey_file = 'probekey.key' # don't hide it if Windows.
-
-    # Create a logger instance and write the date_time to a log file.
-    logger, log_filename = create_logging_function()
-    if logger == False: # Creating the logger instance has failed. Exit.
-        print("\n[CRITICAL] Main, Creating the logger instance has failed")
-        print('Exiting...')
-        sys.exit()
 
     # Get the user's credentials from a file and decrypt them.
     user_creds = get_decrypted_credentials(cred_filename, probekey_file, logger)
@@ -2229,19 +2447,25 @@ def main():
     rem_con = init_probe_console(logger, client)
     if rem_con == False: # Establishing the remote console session has failed. Exit.
         logger.critical("[CRITICAL] Main, Opening the remote console session failed")
-        print("\n[CRITICAL] Main, Main, Opening the remote console session failed")
+        print("\n[CRITICAL] Main, Opening the remote console session failed")
         print(f'Check the log file: {log_filename}. Exiting...')
         sys.exit()
 
     # Run the localconsole menu on the remote probe and gather it's current settings.
-    old_probe_configs_dict, interface_list = gather_probe_configs(logger, rem_con)
-    if old_probe_configs_dict == False:
-        logger.critical("[CRITICAL] Main, Gathering the current probe configs has failed")
-        print("\n[CRITICAL] Main, Gathering the current probe configs has failed")
-        print('Closing the connection...')
-        close_status = close_ssh_session(user_creds, client, rem_con, logger)
-        if close_status == False: # Connection close has failed.
-            logger.critical("[CRITICAL] Main, Closing the SSH connection failed")
+    try:
+        old_probe_configs_dict, interface_list, status = gather_probe_configs(logger, rem_con)
+        if status == False:
+            logger.critical("[CRITICAL] Main, Gathering the current probe configs has failed")
+            print("\n[CRITICAL] Main, Gathering the current probe configs has failed")
+            print('Closing the connection...')
+            close_status = close_ssh_session(user_creds, client, rem_con, logger)
+            if close_status == False: # Connection close has failed.
+                logger.critical("[CRITICAL] Main, Closing the SSH connection failed")
+            print(f'Check the log file: {log_filename}. Exiting...')
+            sys.exit()
+    except Exception: # You can get a traceback exception here if you already have a putty console session open to the probe.
+        logger.critical('[CRITICAL] Main, An exception occurred while trying to gather probe configs')
+        print('[CRITICAL] Main, An exception occurred while trying to gather probe configs')
         print(f'Check the log file: {log_filename}. Exiting...')
         sys.exit()
 
@@ -2271,22 +2495,24 @@ def main():
         #print('Exiting...')
         #sys.exit()
 
-    #print('\nThe new probe configuration will be: ')
-    #pprint.pprint(new_probe_configs_dict)
-
-    set_status = set_probe_configs(old_probe_configs_dict, interface_list, rem_con, logger)
-    if set_status == False: # Closing the SSH session to the probe has failed. Exit.
-        logger.critical("[CRITICAL] Main, Setting the probe configs failed")
-        print("\n[CRITICAL] Main, Setting the probe configs failed")
-        close_status = close_ssh_session(user_creds, client, rem_con, logger)
-        if close_status == False: # Connection close has failed.
-            logger.critical("[CRITICAL] Main, Closing the SSH connection failed")
-        print(f'Check the log file: {log_filename}. Exiting...')
-        sys.exit()
-
-    print('\nAll probe configurations were successfully applied')
-    logger.info("[INFO] All probe configurations were successfully applied")
-
+    if is_set_config_true == True: # The user did not specify the --get flag
+        set_status = set_probe_configs(old_probe_configs_dict, interface_list, rem_con, logger)
+        if set_status == False: # Closing the SSH session to the probe has failed. Exit.
+            logger.critical("[CRITICAL] Main, Setting the probe configs failed")
+            print("\n[CRITICAL] Main, Setting the probe configs failed")
+            close_status = close_ssh_session(user_creds, client, rem_con, logger)
+            if close_status == False: # Connection close has failed.
+                logger.critical("[CRITICAL] Main, Closing the SSH connection failed")
+            print(f'Check the log file: {log_filename}. Exiting...')
+            sys.exit()
+        else: # Success.
+            print('\n[INFO] All probe configurations were successfully applied')
+            logger.info("[INFO] All probe configurations were successfully applied")
+    else: # The user specified the --get flag. We will not make any modifications.
+        print('\n[INFO] All probe configurations were successfully backed up')
+        print('[INFO] No modifications were made to the probe configuration as the --get flag was entered')
+        logger.info("[INFO] All probe configurations were successfully backed up")
+        logger.info("[INFO] No modifications were made to the probe configuration as the --get flag was entered")
     # Close the SSH session to the probe.
     close_status = close_ssh_session(user_creds, client, rem_con, logger)
     if close_status == False: # Connection close has failed.
@@ -2296,7 +2522,7 @@ def main():
         sys.exit()
     else:
         # We are done. Exit anyway.
-        print('Program execution finished')
+        print('[INFO] Program execution finished')
         logger.info("[INFO] Program execution is finished")
         sys.exit()
 
