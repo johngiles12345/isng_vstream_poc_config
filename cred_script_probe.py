@@ -20,6 +20,7 @@ An optional flag --targets can be used to tell the program that there is more th
  uses the ProbeCredFile.ini file to determine targets and credentials.
 """
 
+
 class Credentials():
     """
     This class creates a credentials object that holds all the attributes needed to connect to
