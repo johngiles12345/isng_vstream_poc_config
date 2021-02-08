@@ -29,10 +29,11 @@ import re
 import string
 import json
 import argparse
+import requests
 
-class Credentials:
+class ProbeCredentials:
     """
-        A class to hold user credentials and pass into other functions.
+        A class to hold probe connection and user credentials and pass into other functions.
         ...
         Attributes
         ----------
@@ -62,9 +63,75 @@ class Credentials:
         self.usessshpemfile = False
         self.pkey = ''
         self.expiry_time = -1
-        #self.probekey_file = "probekey.key"
-        #self.probekey = ""
 
+class nGeniusONECredentials():
+    """
+    This class creates a credentials object that holds all the attributes needed to connect to
+    connect to a NetScout nGeniusONE appliance or virtual appliance and authenticate.
+    :return: An instance of this class with all parameters initialized.
+    Attributes
+    ----------
+    ng1hostname : str
+        The hostname of the ng1 server.
+    ng1port : str
+        The port to use for the HTTP-HTTPS connection.
+    ng1username : str
+        The ng1 username for the connection.
+    ng1password : str
+        The encrypted ng1 password if using a password.
+    ng1password_pl: str
+        The unencrypted password for the connection.
+    use_token : bool
+        Use a token rather than a password for the connection.
+    ng1token : str
+        The encrypted token if using a token.
+    ng1token_pl: str
+        The decrypted ng1 token if using a token.
+    ng1key : str
+        The key contents of the private ng1key_file.
+    expiry_time : str
+        The number of seconds before the encrypted password or token expires.
+    """
+
+    def __init__(self):
+        self.ng1hostname = ''
+        self.ng1port = ''
+        self.ng1username = ''
+        self.ng1password = ''
+        self.ng1password_pl = ''
+        self.use_token = False
+        self.ng1token = ''
+        self.ng1token_pl = ''
+        self.ng1key_file = ''
+        self.pkey = ''
+        self.expiry_time = ''
+
+class ApiSession:
+    """
+        A class to hold the parameters needed to exchange API data over a persistent API session.
+        ...
+        Attributes
+        ----------
+        ng1_host : str
+            A combination of the web protocol (HTTP or HTTPS) + nG1 Hostname (DNS or IP addr) + the
+             protocol port (80, 8080, 443, 8443).
+        headers : str
+            The HTTP header info. We use this to tell the nG1 API that we would like it to return data
+             in the JSON format.
+        cookies : str
+            The HTTP session cookie that nG1 returns upon establishing the initial API session. This
+             cookie will be used with every subsequent API call until we are finished. This tells the
+             nG1 to autheticate each API call without establishing a brand new API session. This is much
+             faster than creating and destroying an API session for each and every API we make. When we
+             are all done, we will gracefully close the API session and release it from nG1.
+        credentials : str
+            The combination of username:password if using a password, if using a token, this is set to 'Null'.
+        """
+    def __init__(self):
+        self.ng1host = ''
+        self.header = ''
+        self.cookies = ''
+        self.credentials = ''
 
 def flags_and_arguments(prog_version, logger):
     """Allows the user to add optional flags to the launch command.
@@ -80,8 +147,7 @@ def flags_and_arguments(prog_version, logger):
         text = 'This program is used to get probe configurations and back them up. Also it can set probe configurations.'
         # Initiate the parser with a description
         parser = argparse.ArgumentParser(description=text)
-        parser.add_argument('--get', action="store_true", help='only get the probe configs and backup. Do not set any probe configs', dest='get', default=False)
-        #parser.add_argument('--set', action="store_true", help='set the nGeniusONE config to match the xxxx_config_current.csv', dest='set', default=False)
+        parser.add_argument('--set', action="store_true", help='in addition to getting probe configurations, also set the probe configurations', dest='set', default=False)
         parser.add_argument('--version', action="store_true", help="show program version and exit", dest='version', default=False)
         #parser.add_argument('--config', dest='config_type', required=True, action="store", choices=['sites', 'client_comm', 'interfaces', 'apps'],
                     #help="specify which nGeniusONE configuration you want; sites, client_comm, interfaces or apps")
@@ -90,10 +156,11 @@ def flags_and_arguments(prog_version, logger):
         if args.version == True: # They typed either "-V" or "--version" flags.
             print(f'Program version is: {prog_version}')
             sys.exit()
-        if args.get == True: # They typed the "--get" flag.
-            is_set_config_true = False # I only need to do a get and backup operation. No set.
+        if args.set == True: # They typed the "--set" flag.
+            is_set_config_true = True # In addition to getting the probe configs and backing them up, I need to
+            # also set the probe configurations based on a golden config file.
         else:
-            is_set_config_true = True # I need to do get, backup and set operations.
+            is_set_config_true = False # I only need to do the get probe configs and backup operations
         status = True
 
         return status, is_set_config_true
@@ -150,32 +217,209 @@ def create_logging_function():
         print(f"[ERROR] An exception occurred while attempting to the create log file function for: {log_filename}")
         return False
 
-def get_decrypted_credentials(cred_filename, probekey_file, logger):
+def get_ng1_decrypted_credentials(ng1_cred_filename, ng1key_file, logger):
     """Read in the encrypted user or user-token credentials from a local CredFile.ini file.
-    Decrypt the credentials and place all the user credentials attributes into a user_creds instance.
-    :param cred_filename: A string that is the name of the cred_filename to read in.
+    Decrypt the credentials and place all the user credentials attributes into a creds instance.
+    :ng1_cred_filename: A string that is the name of the ng1_cred_filename to read in.
+    :ng1key_file: A string that is the name of the ng1's key file to read in.
+    :return: If successful, return the creds as a class instance that contains all the params needed to
+     connect to the ng1 server via HTTP or HTTPS and authenticate the user.
+    :logger: An instance of the logger class so we can write error messages if they occur.
+    Return False if any error occurrs.
+    """
+    # Create an ng1_creds instance to hold our user credentials.
+    ng1_creds = nGeniusONECredentials()
+    # Retrieve the decrypted credentials that we will use to open a session to the ng1 server.
+    try:
+        try: # Open the keyfile containing the key needed to decrypt the password.
+            with open(ng1key_file, 'r') as ng1key_in:
+                ng1key = ng1key_in.read().encode() # Read the key as a string.
+                fng1 = Fernet(ng1key) # Create an instance of the Fernet class to hold the key info.
+        except IOError as e: # Handle file I/O errors.
+            print(f"\n[ERROR] Fatal error: Unable to open ng1key file: {ng1key_file}")
+            print('Did you run the cred_script_nG1.py first?')
+            logger.critical(f"[ERROR] Fatal error: Unable to open ng1key file: {ng1key_file}")
+            logger.error(f'[ERROR] I/O error({e.errno}):  {e.strerror}.')
+        except Exception as e:
+            logger.exception(f"[ERROR] Fatal error: Unable to open ng1key_file: {ng1key_file}")
+            logger.exception(f"Exception error is:\n{e}")
+            return False
+        with open(ng1_cred_filename, 'r') as cred_in:
+            lines = cred_in.readlines()
+            ng1_creds.ng1token = lines[4].partition('=')[2].rstrip("\n")
+            #Check to see if we are expected to use an API Token or Username:Password
+            # print(f' ng1_creds.ng1token is: {ng1_creds.ng1token}')
+            if len(ng1_creds.ng1token) > 1: # Yes use a Token rather than a password.
+                ng1_creds.use_token = True
+                ng1_creds.ng1token_pl = fng1.decrypt(ng1_creds.ng1token.encode()).decode() # Use the key to decrypt.
+                ng1_creds.ng1username = lines[2].partition('=')[2].rstrip("\n")
+            else:
+                ng1_creds.use_token = False # No, do not use a Token, but rather use a password.
+                ng1_creds.ng1username = lines[2].partition('=')[2].rstrip("\n")
+                ng1_creds.ng1password = lines[3].partition('=')[2].rstrip("\n")
+                ng1_creds.ng1password_pl = fng1.decrypt(ng1_creds.ng1password.encode()).decode() # Use the key to decrypt.
+            ng1_creds.ng1hostname = lines[1].partition('=')[2].rstrip("\n")
+            ng1_creds.ng1Port = lines[5].partition('=')[2].rstrip("\n")
+    except IOError as e: # Handle file I/O errors.
+        logger.error(f"[ERROR] Fatal error: Unable to open ng1_cred_filename: {ng1_cred_filename}")
+        logger.error(f'[ERROR] I/O error: {e}')
+        return False
+    except Exception as e: # Handle other unexpected errors.
+        logger.exception(f"[ERROR] Fatal error: Unable to open ng1_cred_filename: {ng1_cred_filename}")
+        logger.exception(f"[ERROR] Exception error is:\n{e}")
+        return False
+
+    return ng1_creds # The function was successful.
+
+def determine_ng1_api_params(ng1_creds, logger):
+    """Based on the values in the ng1_creds instance, determine what all the nG1 API connection and authentication parameters are.
+    :ng1_creds: A class instance that holds all our nG1 connection and user authentication credentials values.
+    :logger: An instance of the logger class so we can write error messages if they occur.
+    :return: If successful, return the nG1 API parameters for ng1_host, headers, cookies and credentials.
+    Return False if any error occurrs.
+    """
+    # You can use an authentication token named NSSESSIONID obtained from the User Management module in nGeniusONE (open the user and click Generate New Key).
+    # This token can be passed to nG1 as a cookie so that we can autheticate.
+    # If we are using the token rather than credentials, we will set credentials to 'Null'.
+    # If we are using the username:password rather than a token, we will set cookies to 'Null'.
+    # Initialize the return parameters just in case we have an error and need to return False.
+
+    # Create an ApiSession instance to hold our API Session parameters. Use these params for all subsequent API calls.
+    session = ApiSession()
+
+    try:
+        if ng1_creds.use_token == True: # The user had selected token rather than username:password.
+            session.credentials = 'Null' # Set username:password to 'Null'. We won't be using these.
+            session.cookies = {'NSSESSIONID': ng1_creds.ng1token_pl} # In this case we will use the token read from the CredFile.ini file.
+        # Otherwise set the credentials to username:password and use that instead of an API token to authenticate to nG1.
+        else: # The user had selected username:password rather than a token.
+            session.cookies = 'Null' # Set cookies to 'Null'. We won't be using a token. We will use username:password instead.
+            session.credentials = ng1_creds.ng1username + ':' + ng1_creds.ng1password_pl # Combines the username and the decrypted password.
+
+        # set the URL web protocol to match what was read out of the CredFile.ini file for ng1Port.
+        if ng1_creds.ng1Port == '80' or ng1_creds.ng1Port == '8080':
+            web_protocol = 'http://'
+        elif ng1_creds.ng1Port == '443' or ng1_creds.ng1Port == '8443':
+            web_protocol = 'https://'
+        else: # Not a standard port, so I don't know if I should use HTTP or HTTPS.
+            print(f'[CRITICAL] nG1 destination port {ng1_creds.ng1Port} is not equal to 80, 8080, 443 or 8443')
+            logger.critical(f'[CRITICAL] nG1 destination port {ng1_creds.ng1Port} is not equal to 80, 8080, 443 or 8443')
+            status = False
+            return status, session # As we are returning multiple params, we will status to set True or False.
+        # Build up the base URL to use for all nG1 API calls.
+        session.ng1_host = web_protocol + ng1_creds.ng1hostname + ':' + ng1_creds.ng1Port
+
+        # Hardcoding the HTTP header to use in all the nG1 API calls.
+        # Specifies the JSON data type as the format of the data we want returned by the nG1 API.
+        session.headers = {
+            'Cache-Control': "no-cache",
+            'Accept': "application/json",
+            'Content-Type': "application/json"
+        }
+    except Exception as e:
+        logger.exception(f"[ERROR] Fatal error: Unable to create log file function for: {log_filename}")
+        logger.exception(f"[ERROR] Exception error is:\n{e}")
+        status = False
+        return status, session # As we are returning multiple params, we will status to set True or False.
+
+    status = True # Success
+    return status, session # As we are returning multiple params, we will status to set True or False.
+
+def open_session(session, logger):
+    """Open an HTTP or HTTPS API session to the nG1. Reuse that session for all commands until finished.
+    :session: An instance of the ApiSession class that holds all our API session params.
+    :logger: An instance of the logger class to write to in case of an error.
+    :return: True if successful. Return False if there are any errors or exceptions.
+    """
+    uri = "/ng1api/rest-sessions" # The uri to use for nG1 API initial connection.
+    url = session.ng1_host + uri
+
+    # Perform the HTTP or HTTPS API call to open the session with nG1 and return a session cookie.
+    try:
+        if session.credentials == 'Null': # Use a token rather than username:password.
+            # Null credentials tells us to use the token. We will use this post and pass in the cookies as the token.
+            post = requests.request("POST", url, headers=session.headers, verify=False, cookies=session.cookies)
+        elif session.cookies == 'Null': # Use a username:password credentials combo instead of a token.
+            #split the credentials string into two parts; username and the unencrypted password.
+            ng1username = session.credentials.split(':')[0]
+            ng1password_pl = session.credentials.split(':')[1]
+            # Null cookies tells us to use the credentials string. We will use this post and pass in the credentials string.
+            post = requests.request("POST", url, headers=session.headers, verify=False, auth=(ng1username, ng1password_pl))
+        else:
+            # print(f'[CRITICAL] opening session to URL: {url} failed')
+            logger.critical(f'[CRITICAL] opening session to URL: {url} failed.')
+            # print('Unable to determine authentication by credentials or token')
+            logger.critical('[CRITICAL] Unable to determine authentication by credentials or token.')
+            return False
+        if post.status_code == 200: # The nG1 API call was successful.
+            print(f'[INFO] Opened Session to URL: {url} Successfully')
+            logger.info(f'[INFO] Opened Session to URL: {url} Successfully')
+            # Utilize the returned cookie for future authentication. Keep this session open for all nG1 API calls.
+            session.cookies = post.cookies # Set the session.cookies param to equal the Web RequestsCookieJar value.
+            return True # Success!
+        else: # We reached the nG1, but the request has failed. A different HTTP code other than 200 was returned.
+            logger.critical(f'[CRITICAL] opening session to URL: {url} failed. Response Code: {post.status_code}. Response Body: {post.text}.')
+            return False
+    except Exception as e: # This means we likely did not reach the nG1 at all. Check your VPN or internet connection.
+        logger.critical(f'[CRITICAL] Opening the nG1 API session has failed')
+        logger.critical(f'[CRITICAL] Cannot reach URL: {url}')
+        logger.critical(f'[CRITICAL] Check the VPN or internet connection')
+        logger.exception(f"[ERROR] Exception error is:\n{e}")
+        return False
+
+def close_session(session, logger):
+    """Close the HTTP or HTTPS API session to the nG1.
+    :session: An instance of the ApiSession class that holds all our API session params.
+    :logger: An instance of the logger class to write to in case of an error.
+    :return: If successful, return True. Return False if there are any errors or exceptions.
+    """
+    try:
+        uri = "/ng1api/rest-sessions/close"
+        url = session.ng1_host + uri
+        # perform the HTTPS API call
+        close = requests.request("POST", url, headers=session.headers, verify=False, cookies=session.cookies)
+
+        if close.status_code == 200: # The nG1 API call was successful.
+            print('[INFO] Closed nG1 API Session Successfully')
+            logger.info('[INFO] Closed nG1 API Session Successfully')
+            return True # Success! We closed the API session.
+        else: # The nG1 API call failed.
+            logger.error(f'[ERROR] closing session failed. Response Code: {close.status_code}. Response Body: {close.text}.')
+            return False
+    except Exception as e:
+        # This means we likely did not reach the nG1 at all. Check your VPN or internet connection.
+        logger.error(f'[CRITICAL] Closing the nG1 API session has failed')
+        logger.exception(f"Exception error is:\n{e}")
+        print('[CRITICAL] Closing the nG1 API session has failed')
+        print('We did not reach the nG1. Check your VPN or internect connection')
+        return False
+
+def get_probe_decrypted_credentials(probe_cred_filename, probekey_file, logger):
+    """Read in the encrypted user or user-token credentials from a local CredFile.ini file.
+    Decrypt the credentials and place all the user credentials attributes into a probe_creds instance.
+    :param probe_cred_filename: A string that is the name of the probe_cred_filename to read in.
     :param probekey_file: A string that is the name of the probe's key file to read in.
     :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
-    :return: If successful, return the user_creds as a class instance that contains all the params needed to
+    :return: If successful, return the probe_creds as a class instance that contains all the params needed to
     log into the probe via SSH. Return False if any error occurrs.
     """
-    # Create a user_creds instance to hold our user credentials.
-    user_creds = Credentials()
+    # Create a probe_creds instance to hold our user credentials.
+    probe_creds = ProbeCredentials()
     # Retrieve the decrypted credentials that we will use to open a session to the probe.
     try:
-        with open(cred_filename, 'r') as cred_in:
+        with open(probe_cred_filename, 'r') as cred_in:
             lines = cred_in.readlines()
-            #print(f'\ncred_in readlines is: {lines}')
-            pem_file_or_password = lines[2].partition('=')[0].rstrip("\n")
-            #print(f'pem_file_or_password is: {pem_file_or_password}')
+            # print(f'\ncred_in readlines is: {lines}')
+            pem_file_or_password = lines[3].partition('=')[0].rstrip("\n")
+            # print(f'pem_file_or_password is: {pem_file_or_password}')
             #Check to see if we are expected to use an SSH key file or a password.
             if pem_file_or_password == 'probesshpemfile': # Yes use an SSH key file rather than a password.
-                user_creds.usessshpemfile = True
-                user_creds.probesshpemfile = lines[2].partition('=')[2].rstrip("\n")
-                user_creds.probeusername = lines[3].partition('=')[2].rstrip("\n")
+                probe_creds.usessshpemfile = True
+                probe_creds.probesshpemfile = lines[3].partition('=')[2].rstrip("\n")
+                probe_creds.probeusername = lines[2].partition('=')[2].rstrip("\n")
                 try:
-                    user_creds.pkey = paramiko.RSAKey.from_private_key_file(user_creds.probesshpemfile)
-                    logger.info(f'[INFO] Found SSH .pem key: {user_creds.probesshpemfile}')
+                    probe_creds.pkey = paramiko.RSAKey.from_private_key_file(probe_creds.probesshpemfile)
+                    logger.info(f'[INFO] Found SSH .pem key: {probe_creds.probesshpemfile}')
                 except SSHException as error:
                     logger.critical(f'[CRITICAL] An SSHException has occurred {error}')
                     return False
@@ -187,52 +431,51 @@ def get_decrypted_credentials(cred_filename, probekey_file, logger):
                 except Exception:
                     logger.exception(f"[ERROR] An exception occurred while attempting to open probekey_file: {probekey_file}")
                     return False
-                user_creds.usessshpemfile = False
-                user_creds.probeusername = lines[2].partition('=')[2].rstrip("\n")
-                user_creds.probepassword = lines[3].partition('=')[2].rstrip("\n")
-                user_creds.probepassword_pl = fprobe.decrypt(user_creds.probepassword.encode()).decode()
-            user_creds.probehostname = lines[1].partition('=')[2].rstrip("\n")
-            user_creds.probeport = lines[4].partition('=')[2].rstrip("\n")
+                probe_creds.usessshpemfile = False
+                probe_creds.probeusername = lines[2].partition('=')[2].rstrip("\n")
+                probe_creds.probepassword = lines[3].partition('=')[2].rstrip("\n")
+                probe_creds.probepassword_pl = fprobe.decrypt(probe_creds.probepassword.encode()).decode()
+            probe_creds.probehostname = lines[1].partition('=')[2].rstrip("\n")
+            probe_creds.probeport = lines[4].partition('=')[2].rstrip("\n")
     except IOError as e: # Handle file I/O errors.
-        print(f"Fatal error: Unable to open cred_filename: {cred_filename}")
-        logger.error(f"Fatal error: Unable to open cred_filename: {cred_filename}")
-        print("I/O error({0}): {1}".format(e.errno, e.strerror))
-        logger.error(f'[ERROR] I/O error: {e.errno}:  {e.strerror}.')
+        print(f"[ERROR] Unable to open probe_cred_filename: {probe_cred_filename}")
+        logger.error(f"[ERROR] Unable to open probe_cred_filename: {probe_cred_filename}")
+        print(f'[ERROR] I/O error: {e}')
+        logger.error(f'[ERROR] I/O error: {e}')
         return False
     except Exception: # Handle other unexpected errors.
-        logger.exception(f"[ERROR] An exception occurred while attempting to open cred_filename: {cred_filename}")
+        logger.exception(f"[ERROR] An exception occurred while attempting to open probe_cred_filename: {probe_cred_filename}")
         return False
 
-    return user_creds # The function was successful.
+    return probe_creds # The function was successful.
 
-def open_ssh_session(user_creds, hostname, logger):
+def open_ssh_session(probe_creds, hostname, logger):
     """
     Opens an SSH session to the probe using the paramiko module.
-    :user_creds: A class instance that contains all the necessary SSH connection parameters.
+    :probe_creds: A class instance that contains all the necessary SSH connection parameters.
     :The hostname or IP Address of the Infinistream or vStream probe.
     :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
     :return: The SSH client instance if successful, False if unsuccessful.
     """
     try:
-        #hostname = user_creds.probehostname
-        port = user_creds.probeport
-        username = user_creds.probeusername
-        if user_creds.usessshpemfile == False: # Use a password for the SSH connection
+        port = probe_creds.probeport
+        username = probe_creds.probeusername
+        if probe_creds.usessshpemfile == False: # Use a password for the SSH connection
             key_filename = None
             pkey = None
-            password = user_creds.probepassword_pl
+            password = probe_creds.probepassword_pl
         else: # Use an SSH .pem keyfile for the SSH connection rather than a password.
             password = None
-            key_filename = user_creds.probesshpemfile
-            pkey = user_creds.pkey
+            key_filename = probe_creds.probesshpemfile
+            pkey = probe_creds.pkey
         timeout = 20 # Number of seconds to wait before timing out
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
-        #client.connect(hostname=hostname, port=port, username=username, password=password, pkey=pkey,
+        # *** Below is the full list of connection params you can use.
+        # client.connect(hostname=hostname, port=port, username=username, password=password, pkey=pkey,
         # key_filename=key_filename, timeout=timeout, allow_agent=True, look_for_keys=True,
         # compress=False, sock=None, gss_auth=False, gss_kex=False, gss_deleg_creds=True,
-         #gss_host=None, banner_timeout=None, auth_timeout=None, gss_trust_dns=True, passphrase=None,
+        # gss_host=None, banner_timeout=None, auth_timeout=None, gss_trust_dns=True, passphrase=None,
         # disabled_algorithms=None)
         print(f'[INFO] Attempting SSH connection to hostname: {hostname} with username: {username} on port: {port}')
         client.connect(hostname=hostname, username=username, password=password, pkey=pkey, timeout=timeout, port=port)
@@ -256,12 +499,12 @@ def execute_single_command_on_remote(command, rem_con, logger):
     #print(f'[INFO] Executing command: {command}')
     logger.info(f'[INFO] Executing command: {command}')
     try:
-        while not rem_con.send_ready(): # Wait for send ready status before sending a command.
-            time.sleep(0.5)
+        #while not rem_con.send_ready(): # Wait for send ready status before sending a command.
+            #time.sleep(0.5)
         rem_con.send(command) # Send the command string to the remote console shell.
-        while not rem_con.recv_ready(): # Wait for the first byte to come into the buffer before starting the sleep timer.
-            time.sleep(0.5)
-        time.sleep(2)
+        #while not rem_con.recv_ready(): # Wait for the first byte to come into the buffer before starting the sleep timer.
+            #time.sleep(0.5)
+        time.sleep(1)
         output = rem_con.recv(2048) # Pull down the receive buffer from the remote console to a limit of 2048 bytes.
         output = output.decode("utf-8") # Output comes back as a file-like binary object. Decode to a string.
     except Exception:
@@ -331,11 +574,11 @@ def get_probe_options(config_attributes_list, rem_con, old_probe_configs_dict, o
             logger.error(f'[ERROR] get_probe_options, Console command: {command} failed')
             status = False
             return old_probe_configs_dict, status
+        formatted_options_configs, status = get_formatted_options_configs(output, logger)
+        if status == False:
+            logger.error(f'[ERROR] get_probe_options, get_formatted_options_configs failed')
+            return old_probe_configs_dict, status
         for config_attribute in config_attributes_list:
-            formatted_options_configs, status = get_formatted_options_configs(output, logger)
-            if status == False:
-                logger.error(f'[ERROR] get_probe_options, get_formatted_options_configs failed')
-                return old_probe_configs_dict, status
             old_probe_configs_dict, status = process_output_non_interface(old_probe_configs_dict, options_type, config_attribute, formatted_options_configs, logger)
             if status == False:
                 logger.error(f'[ERROR] get_probe_options, process_output_non_interface failed')
@@ -368,8 +611,20 @@ def get_probe_config_interface_specific(config_attributes_list, interface_list, 
             # config item in the config_attributes_list and for every interface, one by one.
         for config_attribute in config_attributes_list:
             for interface in interface_list:
-                command = "get " + config_attribute + " " + interface + "\n"
-                output = execute_single_command_on_remote(command, rem_con, logger)
+
+                if config_attribute == 'sip_db':
+                    command = "get " + config_attribute + " " + interface + "\n"
+                    output1 = execute_single_command_on_remote(command, rem_con, logger)
+                    time.sleep(2)
+                    command = "y" + "\n"
+                    output2 = execute_single_command_on_remote(command, rem_con, logger)
+                    output = output1 + output2
+                elif config_attribute == 'h248_cfg': # Special case where the command includes a space char.
+                    command = "get " + 'h248 cfg' + " " + interface + "\n"
+                    output = execute_single_command_on_remote(command, rem_con, logger)
+                else:
+                    command = "get " + config_attribute + " " + interface + "\n"
+                    output = execute_single_command_on_remote(command, rem_con, logger)
                 if output == False:
                     logger.error(f'[ERROR] get_probe_options_interface_specific, Console command: {command} failed')
                     status = False
@@ -403,6 +658,9 @@ def process_output_non_interface(old_probe_configs_dict, options_type, config_at
     """
     #print(f'non interface specific items formatted_options_configs is: {formatted_options_configs}')
     try:
+        # The probe data returned for any command may or may not include the config_attribute.
+        # In many cases we need to modify the config_attribute string so we can validate the data...
+        # returned by the probe.
         if config_attribute == 'config_download':
             formatted_config_attribute = 'config_download :'
         elif config_attribute == 'probe_mode':
@@ -421,16 +679,54 @@ def process_output_non_interface(old_probe_configs_dict, options_type, config_at
             formatted_config_attribute = 'geo_probe is'
         elif config_attribute == 'qos_mode':
             formatted_config_attribute = 'qos mode'
-        elif options_type == 'health_mib_info': # Special case where we have an extra colon in the config_attribute.
+        elif options_type == 'health_mib_info':
             formatted_config_attribute = config_attribute + ' :'
         elif config_attribute == 'trap_port':
             formatted_config_attribute = 'Trap port 1:'
         elif config_attribute == 'ipfrag_table_size':
             formatted_config_attribute = 'IP Fragment Table size:'
+        elif config_attribute == 'tns_skt_count':
+            formatted_config_attribute = 'No of Simultaneous Sockets Supported Per Mibmgr Handler ='
+        elif config_attribute == 'ts_resolution':
+            formatted_config_attribute = 'Hi-res timestamp -'
+        elif config_attribute == 'citrix_discover_apps':
+            formatted_config_attribute = 'Citrix application discovery is'
+        elif config_attribute == 'citrix_server_push':
+            formatted_config_attribute = 'Citrix server push is'
+        elif config_attribute == 'citrix_wildcard_support':
+            formatted_config_attribute = 'Citrix wildcard support is'
+        elif config_attribute == 'citrix_channel_monitoring':
+            formatted_config_attribute = 'Citrix channel support is'
+        elif config_attribute == 'krb_maxname':
+            formatted_config_attribute = 'Kerberos max Name Entries'
+        elif config_attribute == 'krb_ntr':
+            formatted_config_attribute = 'Kerberos NameTable Recording'
+        elif config_attribute == 'rtp_heur':
+            formatted_config_attribute = 'high_priority'
+        elif config_attribute == 'max_hset_download':
+            formatted_config_attribute = 'max_hset_download ='
+        elif config_attribute == 'auto_scroll':
+            formatted_config_attribute = 'auto scroll is'
+
+        elif config_attribute == 'ipreassembly': # Special case where multiple values are returned, and all interfaces all at once.
+            for formatted_options_config in formatted_options_configs: # loop through the list and see if the config_attribute is there.
+                interface_num = '' # Initialize interface_num just in case we can't find it.
+                if 'Interface ' in formatted_options_config:
+                    interface = formatted_options_config[26:28].strip('-') # Account for both one and two digit interface numbers.
+                    interface.strip(' ')
+                    continue
+                else:
+                    ipreassembly_setting = formatted_options_config.split(' = ')[0]
+                    ipreassembly_value = formatted_options_config.split(' = ')[1]
+                    if len(ipreassembly_value) > 0: # I found a value after the equals sign.
+                        old_probe_configs_dict['interface_specific'][0]['interface '+ interface][0][ipreassembly_setting] = ipreassembly_value
+                        continue
+            status = True
+            return old_probe_configs_dict, status
         elif config_attribute == 'ipsec':
             # The output returned for this includes multiple values, but we only 3 of them. Just add the values to the dict.
             if len(formatted_options_configs) == 1:
-                old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_configs[0] # Account for pr-ISNG vintage probes
+                old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_configs[0] # Account for pre-ISNG vintage probes
             if len(formatted_options_configs) == 3:
                 old_probe_configs_dict[options_type][0]['ipsec_esp_sequence_processing'] = formatted_options_configs[0].partition('ipsec: esp sequence processing ')[2][:-2]
                 old_probe_configs_dict[options_type][0]['ipsec_esp_list_size'] = formatted_options_configs[1].partition('esp list size is configured : ')[2]
@@ -438,14 +734,41 @@ def process_output_non_interface(old_probe_configs_dict, options_type, config_at
                 old_probe_configs_dict[options_type][0]['ipsec_reassembly_stamping'] = ipsec_reassembly_stamping_setting[1:] # Add it to the dict.
             status = True
             return old_probe_configs_dict, status
+        elif config_attribute == 'npn_alarms':
+            # The output returned for this includes 3 key:value pairs per line and 7 lines returned by the probe.
+            for formatted_options_config in formatted_options_configs: # loop through the list and see if the config_attribute is there.
+                if 'npn_alarms set to' in formatted_options_config:
+                    old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_config.partition('npn_alarms set to')[2]
+                    break # This is the last setting returned from the command, so break out of the loop if found.
+                npn_alarms_split = formatted_options_config.split()
+                old_probe_configs_dict[options_type][0][npn_alarms_split[1]] = npn_alarms_split[2]
+                old_probe_configs_dict[options_type][0][npn_alarms_split[4]] = npn_alarms_split[5]
+                old_probe_configs_dict[options_type][0][npn_alarms_split[7]] = npn_alarms_split[8]
+            status = True
+            return old_probe_configs_dict, status
         elif config_attribute == 'app_table_size':
             # The output returned for this only includes the value. Just add the value to the dict.
             old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_configs[0]
             status = True
             return old_probe_configs_dict, status
+        elif config_attribute == 'h248_protocols':
+            for formatted_options_config in formatted_options_configs: # loop through the list and see if the config_attribute is there.
+                if 'H248-' in formatted_options_config: # Some basic validity checking to make sure we have the right values.
+                    # The output returned for this only includes the value. Just add the value to the dict.
+                    h248_protocols_split = formatted_options_config.split(maxsplit=1) # Split out the first word.
+                    h248_protocols_setting = h248_protocols_split[0] # Get the first word of the formatted_options_config to get the setting
+                    h248_protocols_value = h248_protocols_split[1] # The rest of the words represent the setting value
+                    old_probe_configs_dict[options_type][0][h248_protocols_setting] = h248_protocols_value
+            status = True
+            return old_probe_configs_dict, status
         elif config_attribute == 'max_capture_size':
             # The output returned for this only includes the value. Just add the value to the dict.
             old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_configs[0]
+            status = True
+            return old_probe_configs_dict, status
+        elif config_attribute == 'h323_options':
+            # The output returned for this only includes the value. Just add the value to the dict.
+            old_probe_configs_dict[options_type][0][config_attribute + ' max calls'] = formatted_options_configs[0].split()[-1]
             status = True
             return old_probe_configs_dict, status
         elif config_attribute == 'max_dhcp':
@@ -469,11 +792,7 @@ def process_output_non_interface(old_probe_configs_dict, options_type, config_at
             status = True
             return old_probe_configs_dict, status
         else:
-            formatted_config_attribute = config_attribute
-        #if config_attribute == 'qos_mode':
-            #print('We are at qos_mode!!!')
-            #print(f'\nformatted_config_attribute is: {formatted_config_attribute}')
-            #print(f'formatted_options_configs is: {formatted_options_configs}')
+            formatted_config_attribute = config_attribute # The config_attribute string is within the data returned by the probe as-is.
         # Depending on the config of the probe, the list of attributes can change.
         for formatted_options_config in formatted_options_configs: # loop through the list and see if the config_attribute is there.
             #formatted_options_config_list = formatted_options_config.partition(formatted_config_attribute + ' ')
@@ -482,20 +801,12 @@ def process_output_non_interface(old_probe_configs_dict, options_type, config_at
             #print(f'compare right formatted_options_config is: {formatted_options_config}')
             if formatted_config_attribute in formatted_options_config:
                 index = formatted_options_configs.index(formatted_options_config) # Find the index of the formatted_options_configs
-                #print(f'I found {formatted_config_attribute} at index position {index}')
-                index_found = True
-                #break # I found the config_attribute, break out of this search loop.
-            else:
-                #print(f'I did not find the index for this {config_attribute}')
-                index_found = False
-                continue
-            # Add the config item to the dictionary for backup.
-            if index_found == True: #I found the config item.
-                #print(f'Inside process_output_non_interface, I am adding the probe option config item {config_attribute}')
+                # print(f'I found {formatted_config_attribute} at index position {index}')
                 old_probe_configs_dict[options_type][0][config_attribute] = formatted_options_configs[index].partition(formatted_config_attribute + ' ')[2]
+                break # I found the formatted_config_attribute, break out of this search loop.
             else:
-                print(f'I did not find {formatted_config_attribute} anywhere in the formatted_options_config_list' )
-                pass
+                #print(f'I did not find the index for this {formatted_config_attribute}')
+                continue # I did  find the formatted_config_attribute in this loop, get the next formatted_config_attribute.
         status = True
         return old_probe_configs_dict, status
     except Exception:
@@ -547,7 +858,19 @@ def get_formatted_options_configs(output, logger):
                 continue
             elif 'New Interface' in options_config:
                 continue
-            elif 'ifn ip_hdr' in options_config:
+            elif 'Ifn  value' in options_config:
+                continue
+            elif 'ifn ip_hdr CRC Inner_VLAN Outer_VLAN Generic' in options_config:
+                continue
+            elif 'Table size allocation' in options_config:
+                continue
+            elif 'Ifn Percentage' in options_config:
+                continue
+            elif 'Change admin_password' in options_config:
+                continue
+            elif  'Selection#:' in options_config:
+                continue
+            elif 'IFN  asi_mode' in options_config:
                 continue
             elif 'ifn  custom_dpi' in options_config:
                 continue
@@ -563,8 +886,6 @@ def get_formatted_options_configs(output, logger):
                 continue
             elif 'GM Null ciphering for the ifn' in options_config:
                 continue
-            elif '------------' in options_config:
-                continue
             elif 'Value that will be used after probe reset' in options_config:
                 continue
             elif 'Health MIB Information!' in options_config:
@@ -579,6 +900,24 @@ def get_formatted_options_configs(output, logger):
                 continue
             elif '8/16 times the configured size' in options_config:
                 continue
+            elif 'Configured values (in thousands)' in options_config:
+                continue
+            elif 'IFN sessions' in options_config:
+                continue
+            elif 'IFN gtp_gen_con_opt' in options_config:
+                continue
+            elif 'current_value' in options_config:
+                continue
+            elif 'protocol  ppid' in options_config:
+                continue
+            elif 'Health MIB is initialized successfully.' in options_config:
+                continue
+            elif options_config == '------------------------':
+                continue
+            elif 'H248 curIFN' in options_config:
+                continue
+            elif 'NPN Alarm Table Types' in options_config:
+                continue
             else:
                 options_config_split = options_config.split()
                 options_config_new = " ".join(options_config_split)
@@ -588,6 +927,8 @@ def get_formatted_options_configs(output, logger):
         status = False
         return formatted_options_configs, status
     status = True
+    #print(f'\noptions_configs is: {options_configs}')
+    #print(f'\nformatted_options_configs are: {formatted_options_configs}')
     return formatted_options_configs, status
 
 def process_output_per_interface(config_attribute, old_probe_configs_dict, options_type, formatted_options_configs, interface, logger):
@@ -633,19 +974,69 @@ def process_output_per_interface(config_attribute, old_probe_configs_dict, optio
         elif config_attribute == 'ssl_session_cnt':
             formatted_config_attribute = 'Max. SSL session count for IFN ' + interface + ' ='
         elif config_attribute == 'table_size_allocation':
-            formatted_config_attribute = interface
+            formatted_config_attribute = interface + ' '
         elif config_attribute == 'ipv6_mode':
+            formatted_config_attribute = interface
+        elif config_attribute == 'xdr':
+            formatted_config_attribute = interface
+        elif config_attribute == 'rtp_ast':
             formatted_config_attribute = interface
         else:
             formatted_config_attribute = config_attribute
         # Loop through each each config setting returned by the probe for this config_attribute.
         for formatted_options_config in formatted_options_configs: # loop through the list and see if the config_attribute is there.
+            if '------------' in formatted_options_config: # Filter out lines like this.
+                continue
+            # Next several lines are to avoid a false positive partial match. See the comment 'Skip the partial match'.
+            if config_attribute == 'Data w/o Control' and 'Data w/o Control Tcm' in formatted_options_config:
+                continue # Skip the partial match.
+            if config_attribute == 'disc_table' and 'url_disc_table' in formatted_options_config:
+                continue # Skip the partial match.
+            if config_attribute == 'conv' and 'conv ports' in formatted_options_config:
+                continue # Skip the partial match.
+            if config_attribute == 'conv' and 'conv qos' in formatted_options_config:
+                continue # Skip the partial match.
+            if config_attribute == 'conv' and 'uc_conv' in formatted_options_config:
+                continue # Skip the partial match.
             if config_attribute == 'skt': # Special case where we might match the interface number to one of the values.
                 if formatted_options_config.startswith(formatted_config_attribute): # The interface number plus a space will come first.
                     old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_config.partition(formatted_config_attribute)[2]
-                    index_found = False # We are not using an index to search for these config items.
-                else:
-                    index_found = False
+                    continue # I found the config_attribute, go to the next formatted_options_config item returned by the probe.
+            elif config_attribute == 'site_outer': # Special case where the return is only the value on or off
+                if 'on' or 'off' in formatted_options_config: # The interface number plus a space will come first.
+                    old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_config
+                    continue # go to the next formatted_options_config item returned by the probe.
+            elif config_attribute == 'sip_db': # Special case where the return includes both the setting and value
+                if '=' in formatted_options_config: # Basic validity check
+                    sip_db_setting = formatted_options_config.partition(' = ')[0]
+                    sip_db_value = formatted_options_config.partition(' = ')[2]
+                    old_probe_configs_dict['sip_db'][0]['interface '+ interface][0]['sip_db ' + sip_db_setting] = sip_db_value
+                    continue # go to the next formatted_options_config item returned by the probe.
+            elif config_attribute == 'frag_reassembly': # Special case where the return includes both the setting and value
+                if len(formatted_options_config) < 1: # special case for interfaces belonging to an AGGREGATE interface.
+                    old_probe_configs_dict['frag_reassembly'][0]['interface '+ interface][0]['frag_reassembly'] = 'N/A for ifns part of an AGGREGATE interface'
+                    break
+                if '=' in formatted_options_config: # Basic validity check
+                    frag_reassembly_setting = formatted_options_config.partition(' = ')[0]
+                    frag_reassembly_value = formatted_options_config.partition(' = ')[2]
+                    old_probe_configs_dict['frag_reassembly'][0]['interface '+ interface][0]['frag_reassembly ' + frag_reassembly_setting] = frag_reassembly_value
+                    continue # go to the next formatted_options_config item returned by the probe.
+            elif config_attribute == 'h248_cfg': # Special case where the return includes both the setting and value
+                if '=' in formatted_options_config: # Basic validity check
+                    # print(f' For H248 the formatted_options_config prior to partition and strip is: {formatted_options_config}')
+                    h248_cfg_setting = formatted_options_config.partition(' = ')[0].strip('-') # Strip out dashes at the beginning and end of strings.
+                    if '-' in h248_cfg_setting:
+                        for char in h248_cfg_setting: # Strip out dashes in the middle of the string.
+                            if char == '-':
+                                h248_cfg_setting = h248_cfg_setting.replace(char,"")
+                            if char == '  ':
+                                h248_cfg_setting = h248_cfg_setting.replace(char," ") # Replace double spaces with a single space.
+                    # print(f'\nH248 setting after strip is: {h248_cfg_setting}')
+                    h248_cfg_value = formatted_options_config.partition(' = ')[2]
+                    old_probe_configs_dict['h248_cfg'][0]['interface '+ interface][0]['h248_cfg ' + h248_cfg_setting] = h248_cfg_value
+                    continue # go to the next formatted_options_config item returned by the probe.
+            elif config_attribute == 'max_etherpktsize': # Special case where the return is only the value on or off
+                old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_config
                 continue # I found the config_attribute, go to the next formatted_options_config item returned by the probe.
             elif config_attribute == 'ipsec_opts': # Special case where non of the values include the 'ipsec_opts' key.
                 ipsec_opts_setting = formatted_options_config.split(' = ')[0]
@@ -655,10 +1046,7 @@ def process_output_per_interface(config_attribute, old_probe_configs_dict, optio
                     # The ipsec_opts keys returned do not contain any portion of 'ipsec_opts'.
                     # So we will process them as key:value pairs and just write them to the dictionary.
                     # Skip the index search portion of this function.
-                    index_found = False # We are not using an index to search for these config items.
-                else:
-                    index_found = False
-                continue # I found the config_attribute, go to the next formatted_options_config item returned by the probe.
+                    continue # go to the next formatted_options_config item returned by the probe.
             elif config_attribute == 'ssl_health': # Special case where the value contains the name of the setting.
                 ssl_health_setting = formatted_options_config.split('ssl_health: ')
                 ssl_health_setting = ssl_health_setting[1].split()[0] # Get the first word of the value and add it to the setting name.
@@ -667,38 +1055,32 @@ def process_output_per_interface(config_attribute, old_probe_configs_dict, optio
                     ssl_health_value_string = formatted_options_config.split('ssl_health: ')[1]
                 else:
                     ssl_health_setting = 'ssl_health ' + ssl_health_setting # Add the config_attribute to the setting name.
-                    #print(f'ssl_health_setting is: {ssl_health_setting}')
                     ssl_health_value = formatted_options_config.split('ssl_health: ')[1] #get the whole value portion of the string again.
                     ssl_health_value_list = ssl_health_value.split(' ') # split it into a list.
-                    #print(f'ssl_health_value_list is: {ssl_health_value_list}')
                     ssl_health_value_list.pop(0) # Remove the first word which is now part of the ssl_health_setting string.
                     ssl_health_value_string = " ".join(ssl_health_value_list) # Put all the remaining words back together into a string.
-                    #print(f'ssl_health_value string is: {ssl_health_value_string}')
                 if len(ssl_health_value_string) > 1: # Checking to make sure I don't have an empty string.
                     # Add it to the dictionay.
                     old_probe_configs_dict[options_type][0]['interface '+ interface][0][ssl_health_setting] = ssl_health_value_string
                     # Skip the index search portion of this function.
-                    index_found = False # We are not using an index to search for these config items.
-                else:
-                    index_found = False
-                continue # I found the config_attribute, go to the next formatted_options_config item returned by the probe.
+                    continue # go to the next formatted_options_config item returned by the probe.
+            elif config_attribute == 'xdr':
+                if interface + ' Enabled' in formatted_options_config or interface + ' Disabled' in formatted_options_config:
+                    old_probe_configs_dict[options_type][0]['interface '+ interface][0]['gtp_gen_con_opt'] = formatted_options_config.partition(formatted_config_attribute + ' ')[2]
+                    # Skip the index search portion of this function. Special case where an extra surprise attribute is returned.
+                elif interface + ' ' in formatted_options_config:
+                    old_probe_configs_dict[options_type][0]['interface '+ interface][0]['xdr'] = formatted_options_config.partition(formatted_config_attribute + ' ')[2]
+                    # Skip the index search portion of this function. Special case where an extra surprise attribute is returned.
+                    continue
             else:
                 if formatted_config_attribute in formatted_options_config:
                     index = formatted_options_configs.index(formatted_options_config) # Find the index of the formatted_options_configs
-                    print(f'I found {config_attribute} at index position {index}')
-                    index_found = True
-                else:
-                    #print(f'I did not find the index for this {config_attribute}')
-                    index_found = False # No match, search the next
+                    # print(f'I found {config_attribute} at index position {index}')
+                    if config_attribute == 'encap_type':
+                        old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_configs[index]
+                    else:
+                        old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_configs[index].partition(formatted_config_attribute + ' ')[2]
                     continue
-            if index_found == True: # We found the matching setting, add it to the dictionary.
-                # Add the config item to the dictionary for backup.
-                if config_attribute == 'encap_type':
-                    old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_configs[index]
-                else:
-                    old_probe_configs_dict[options_type][0]['interface '+ interface][0][config_attribute] = formatted_options_configs[index].partition(formatted_config_attribute + ' ')[2]
-            else: # we checked every item in formatted_options_config and could not find a match for this setting. This should not happen.
-                print(f'I did not find the config_attribute: {config_attribute} at all in the formatted_options_configs: {formatted_options_configs}')
         status = True
         return old_probe_configs_dict, status
     except Exception:
@@ -794,7 +1176,26 @@ def get_probe_options_non_interface_specific(config_attributes_list, rem_con, ol
     """
     try:
         for config_attribute in config_attributes_list:
-            command = "get " + config_attribute + "\n"
+            if config_attribute == 'citrix_discover_apps': # special case where citrix commands include a space char.
+                command = "get " + 'citrix discover_apps' + "\n"
+            elif config_attribute == 'citrix_server_push':
+                command = "get " + 'citrix server_push' + "\n"
+            elif config_attribute == 'citrix_wildcard_support':
+                command = "get " + 'citrix wildcard_support' + "\n"
+            elif config_attribute == 'citrix_channel_monitoring':
+                command = "get " + 'citrix channel_monitoring' + "\n"
+            elif config_attribute == 'h248_protocols':
+                command = "get " + 'h248 protocols' + "\n"
+            elif config_attribute == 'vq_dtmf_events':
+                command = "get " + 'vq dtmf_events' + "\n"
+            elif config_attribute == 'vq_payload':
+                command = "get " + 'vq payload' + "\n"
+            elif config_attribute == 'krb_maxname':
+                command = "get " + 'krb maxname' + "\n"
+            elif config_attribute == 'krb_ntr':
+                command = "get " + 'krb ntr' + "\n"
+            else:
+                command = "get " + config_attribute + "\n"
             output = execute_single_command_on_remote(command, rem_con, logger) # Run the command.
             if output == False:
                 logger.error(f'[ERROR] get_probe_options_non_interface_specific, Console command: {command} failed')
@@ -924,22 +1325,29 @@ def get_probe_interface_list(old_probe_configs_dict, options_type, rem_con, logg
     try:
         command = "localconsole\n"
         output = execute_single_command_on_remote(command, rem_con, logger)
-        if output == False:
-            logger.error("[ERROR] get_probe_interface_list - command 'localconsole' failed")
+        if 'Interface number :' not in output: # There may be a session already open on this probe...
+        # or the probe services are not running.
+            print(f'\n[CRITICAL] Attempt to run the localconsole script failed, the menu was not presented')
+            print(f'There may be another console session already open? Please close them.')
+            print(f'Otherwise the probe processes may not be running - check with ./PS')
+            logger.critical("[CRITICAL] get_probe_interface_list - 'localconsole' command failed")
             status = False
             return old_probe_configs_dict, interface_list, status
-        output = ""
+        if output == False:
+            logger.critical("[CRITICAL] get_probe_interface_list - command 'localconsole' failed")
+            status = False
+            return old_probe_configs_dict, interface_list, status
         command = "7\n" # We need to know what interfaces exist on this probe. Enter interface options menu.
         #print('Getting Interfaces...', end="")
         output = execute_single_command_on_remote(command, rem_con, logger) # Send option 7 to the localconsole menu.
         if output == False:
-            logger.error("[ERROR] get_probe_interface_list - option '7' command, interface options failed")
+            logger.error("[ERROR] get_probe_interface_list - option '7' command failed")
             status = False
             return old_probe_configs_dict, interface_list, status
 
         formatted_options_configs, status = get_formatted_options_configs(output, logger)
         if status == False:
-            logger.error(f'[ERROR] get_probe_options, get_formatted_options_configs failed')
+            logger.error(f'[ERROR] get_probe_interface_list, get_formatted_options_configs failed')
             return old_probe_configs_dict, interface_list, status
         #print(f'\nformatted_options_configs is: {formatted_options_configs}')
         for formatted_option in formatted_options_configs:
@@ -2346,7 +2754,8 @@ def gather_probe_configs(logger, rem_con):
                                 'health_mib_info': [{}], 'agent_options': [{}], 'software_options': [{}],
                                 'protocol_options': [{}], 'http': [{}], 'asi': [{}], 'interface_specific': [{}],
                                 'non_interface_specific': [{}], 'security_options': [{}], 'ipsec_opts': [{}],
-                                'ssl_health': [{}]}
+                                'ssl_health': [{}], 'frag_reassembly':[{}], 'h248_cfg':[{}], 'sip_db':[{}],
+                                'npn_alarms':[{}]}
 
         options_type = 'interface_list'
         print('\rGetting Interface List...', end="")
@@ -2452,11 +2861,11 @@ def gather_probe_configs(logger, rem_con):
                                 'http use_xff', 'http use_xff_multiple_clients', 'http use_client_ip_field',
                                 'http use_x_true_client_ip', 'http use_x_real_ip_field']
         options_type = 'http'
-        print('\rGetting HTTP...', end="")
+        print('\rGetting HTTP Config...', end="")
         # Get the whole list of probe http settings and add them to the old_probe_configs_dict.
         old_probe_configs_dict, status = get_probe_options(config_attributes_list, rem_con, old_probe_configs_dict, options_type, logger)
         if status == False:
-            logger.error("[ERROR] Gather probe configs, Getting HTTP failed")
+            logger.error("[ERROR] Gather probe configs, Getting HTTP Config failed")
             return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
@@ -2467,11 +2876,31 @@ def gather_probe_configs(logger, rem_con):
                                 'htt', 'ksi 1min', 'ksi client_ip', 'subscriber', '1-min', '15-sec',
                                 'url_disc_table']
         options_type = 'asi'
-        print('\rGetting ASI...', end="")
+        print('\rGetting ASI Config...', end="")
         # Get the whole list of probe asi settings per interface and add them to the old_probe_configs_dict.
         old_probe_configs_dict, status = get_probe_options_per_interface(config_attributes_list, interface_list, rem_con, old_probe_configs_dict, options_type, logger)
         if status == False:
-            logger.error("[ERROR] Gather probe configs, Getting ASI failed")
+            logger.error("[ERROR] Gather probe configs, Getting ASI Config failed")
+            return old_probe_configs_dict, interface_list, status
+        else:
+            print('Done')
+
+        config_attributes_list = ['frag_reassembly']
+        options_type = 'frag_reassembly'
+        print('\rGetting Frag Reassembly Config...', end="")
+        old_probe_configs_dict, status = get_probe_config_interface_specific(config_attributes_list, interface_list, rem_con, old_probe_configs_dict, options_type, logger)
+        if status == False:
+            logger.error("[ERROR] Gather probe configs, Getting Frag Reassembly Config failed")
+            return old_probe_configs_dict, interface_list, status
+        else:
+            print('Done')
+
+        config_attributes_list = ['h248_cfg']
+        options_type = 'h248_cfg'
+        print('\rGetting H.248 Config...', end="")
+        old_probe_configs_dict, status = get_probe_config_interface_specific(config_attributes_list, interface_list, rem_con, old_probe_configs_dict, options_type, logger)
+        if status == False:
+            logger.error("[ERROR] Gather probe configs, Getting H.248 Config failed")
             return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
@@ -2488,42 +2917,65 @@ def gather_probe_configs(logger, rem_con):
 
         config_attributes_list = ['ssl_health']
         options_type = 'ssl_health'
-        print('\rGetting SSL Health Settings...', end="")
+        print('\rGetting SSL Health Configs...', end="")
         old_probe_configs_dict, status = get_probe_config_interface_specific(config_attributes_list, interface_list, rem_con, old_probe_configs_dict, options_type, logger)
         if status == False:
-            logger.error("[ERROR] Gather probe configs, Getting IPsec Options failed")
+            logger.error("[ERROR] Gather probe configs, Getting SSL Health Configs failed")
+            return old_probe_configs_dict, interface_list, status
+        else:
+            print('Done')
+
+        config_attributes_list = ['sip_db']
+        options_type = 'sip_db'
+        print('\rGetting SIP Database Configs...', end="")
+        old_probe_configs_dict, status = get_probe_config_interface_specific(config_attributes_list, interface_list, rem_con, old_probe_configs_dict, options_type, logger)
+        if status == False:
+            logger.error("[ERROR] Gather probe configs, Getting SIP Database Configs failed")
+            return old_probe_configs_dict, interface_list, status
+        else:
+            print('Done')
+
+        config_attributes_list = ['npn_alarms']
+        options_type = 'npn_alarms'
+        print('\rGetting NPN Alarm Configs...', end="")
+        old_probe_configs_dict, status = get_probe_options_non_interface_specific(config_attributes_list, rem_con, old_probe_configs_dict, options_type, logger)
+        if status == False:
+            logger.error("[ERROR] Gather probe configs, Getting NPN Alarm Configs failed")
             return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
 
         config_attributes_list = ['skt_vlan_enable', 'span_duplicate', 'ssl_sni', 'encap_type', 'time_sync',
-        'ssl_cert', 'ssl_decrypt', 'ssl_session_ageout', 'ssl_session_cnt']
+        'ssl_cert', 'ssl_decrypt', 'ssl_session_ageout', 'ssl_session_cnt', 'site_outer', 'max_etherpktsize',
+        'rtp_ast']
         options_type = 'interface_specific'
-        print('\rGetting Interface Specific Options...', end="")
+        print('\rGetting Interface Specific Configs...', end="")
         # Get the whole list of probe interface specific settings and add them to the old_probe_configs_dict.
         old_probe_configs_dict, status = get_probe_config_interface_specific(config_attributes_list, interface_list, rem_con, old_probe_configs_dict, options_type, logger)
         if status == False:
-            logger.error("[ERROR] Gather probe configs, Getting Interface Specific Options failed")
+            logger.error("[ERROR] Gather probe configs, Getting Interface Specific Configs failed")
             return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
 
         config_attributes_list = ['config_download', 'probe_mode', 'vq_payload', 'vq_dtmf_events', 'asi_mode',
          'app_table_size', 'ip_options', 'ipfrag_table_size', 'geo_probe', 'vlan_disc_type', 'ipsec', 'qos_mode', 'trap_port',
-         'max_capture_size', 'max_dhcp', 'max_ipv6', 'site_conversation', 'site_mac', 'vlan_disc_type']
+         'max_capture_size', 'max_dhcp', 'max_ipv6', 'site_conversation', 'site_mac', 'vlan_disc_type',
+         'qos_groups', 'ipother_qos', 'ipreassembly', 'virt_pkt_dist', 'ts_resolution', 'tns_skt_count',
+         'citrix_discover_apps', 'citrix_server_push', 'citrix_wildcard_support', 'citrix_channel_monitoring',
+          'krb_maxname', 'krb_ntr', 'rtp_heur', 'h248_protocols', 'h323_options', 'max_hset_download', 'auto_scroll']
         options_type = 'non_interface_specific'
-        print('\rGetting Non-Interface Specific Options...', end="")
+        print('\rGetting Non-Interface Specific Configs...', end="")
         # Get each probe non-interface specific settings and add them to the old_probe_configs_dict.
         old_probe_configs_dict, status = get_probe_options_non_interface_specific(config_attributes_list, rem_con, old_probe_configs_dict, options_type, logger)
         if status == False:
-            logger.error("[ERROR] Gather probe configs, Getting Non-Interface Specific Options failed")
+            logger.error("[ERROR] Gather probe configs, Getting Non-Interface Specific Configs failed")
             return old_probe_configs_dict, interface_list, status
         else:
             print('Done')
 
-        config_attributes_list = ['community_type', 'custom_dpi', 'skt', 'match_uri_only_mode', 'table_size_allocation', 'ipv6_mode']
+        config_attributes_list = ['community_type', 'custom_dpi', 'skt', 'match_uri_only_mode', 'table_size_allocation', 'ipv6_mode', 'xdr']
         options_type = 'interface_specific'
-        #print("\r                                             ", end='') # Clear the progress print line before we return.
         print('\rGetting Community Type...', end="")
         old_probe_configs_dict, status = get_probe_options_single_command_multi_interface(config_attributes_list, interface_list, rem_con, old_probe_configs_dict, options_type, logger)
         if status == False:
@@ -2602,11 +3054,11 @@ def read_config_from_json(config_filename, logger):
         logger.exception(f"[ERROR] An exception occurred when attempting to read the JSON config file: {config_filename}")
         return False
 
-def close_ssh_session(user_creds, hostname, client, rem_con, logger):
+def close_ssh_session(probe_creds, hostname, client, rem_con, logger):
     """
     Close the remote console shell session to the probe.
     Close an SSH session to the probe using paramiko.
-    :user_creds: A class instance that contains all the necessary connection parameters.
+    :probe_creds: A class instance that contains all the necessary connection parameters.
     :client: The SSH client instance.
     :rem_con: The remote console shell session instance.
     :logger: An instance of the logger class that we can use to write errors and exceptions to a local log file.
@@ -2622,6 +3074,84 @@ def close_ssh_session(user_creds, hostname, client, rem_con, logger):
         logger.exception(f"[ERROR] An exception occurred while attempting to close the SSH connection to: {hostname}")
         return False
 
+def get_probe_targets_from_ng1(session, config_type, logger):
+    """Use the nG1 API to get the configuration in the system for the config_type passed in.
+    :config_type: The type of config data to get (devices, other for future expansion)
+    :session: An instance of the ApiSession class that holds all our API session params.
+    :logger: An instance of the logger class to write to in case of an error.
+    :return: If successful, return the devices data in JSON format and status = True
+    Return an empty dictionary and status = False if there are any errors or exceptions.
+    """
+    if config_type == 'devices':
+        uri = "/ng1api/ncm/devices/"
+    else:
+        print(f'[ERROR] Invalid config_type: {config_type}')
+        logger.error(f'[ERROR] Invalid config_type: {config_type}')
+        status = False
+        devices_data = {}
+        return devices_data, status
+    url = session.ng1_host + uri
+    try:
+        # perform the HTTPS API call to get the sites information
+        get = requests.get(url, headers=session.headers, verify=False, cookies=session.cookies)
+
+        if get.status_code == 200:
+            # success
+            print(f'[INFO] get {config_type} nG1 API request Successful')
+            logger.info(f'[INFO] get {config_type} nG1 API request Successful')
+            # return the json object that contains the site information
+            status = True
+            devices_data = get.json()
+            return devices_data, status
+        else:
+            logger.error(f'[ERROR] get {config_type} nG1 API request failed. Response Code: {get.status_code}. Response Body: {get.text}.')
+            devices_data = {}
+            status = False
+            return devices_data, status
+    except Exception as e: # Handle other unexpected errors.
+        logger.exception(f'[ERROR] get {config_type} nG1 API request failed')
+        logger.exception(f'[ERROR] URL sent is: {url}')
+        logger.exception(f"[ERROR] Exception error is:\n{e}")
+        devices_data = {}
+        status = False
+        return devices_data, status
+
+def get_ip_addresses_on_all_devices(session, logger, devices_data):
+    """Use the nG1 API to get the host IP address for every active device (Infinistream or vStream) in the system.
+    This will loop through the list of active devices and pull in the IP address for each device.
+    :session: An instance of the ApiSession class that holds all our API session params.
+    :devices_data: A json formatted dictionary of all the devices in the system attached to nG1.
+    :logger: An instance of the logger object to write to in case of an error.
+    :return: If successful, return the finished probe_targe_list.
+    Return False if there are any errors or exceptions.
+    """
+    # Initialize a dictionary to hold all the valid, active devices and thier active interface info.
+    probe_target_list = []
+    try:
+        # Interate over the devices in devices_list and only include active infinistreams or vStreams.
+        for device in devices_data['deviceConfigurations']:
+            device_name = device['deviceName']
+            device_ip_address = device['deviceIPAddress']
+            device_status = device['status']
+            device_type = device['deviceType']
+            if device_status == 'Active': # Only include active devices.
+                if device_type == 'InfiniStream' or device_type == 'vSTREAM': # Only include Infinstreams or vStreams.
+                    # This is a qualified probe, add it to the target list.
+                    probe_target_list.append(device_ip_address)
+                else:
+                    print(f'[INFO] Device: {device_name} type is: {device_type}. Skipping...')
+                    logger.info(f'[INFO] Device: {device_name} type is: {device_type}. Skipping...')
+            else:
+                print(f'[INFO] Device: {device_name} status is: {device_status}. Skipping...')
+                logger.info(f'[INFO] Device: {device_name} status is: {device_status}. Skipping...')
+    except Exception as e:
+        logger.exception('[ERROR] get_ip_addresses_on_all_devices has failed')
+        logger.exception(f"[ERROR] Exception error is:\n{e}")
+        status = False
+        return probe_target_list, status
+    status = True
+    return probe_target_list, status # Success! Return the finished probe list to the calling function.
+
 def main():
     #golden_probe_config_filename = 'golden_probe_config.json'
     # Create a logger instance and write the date_time to a log file.
@@ -2631,7 +3161,7 @@ def main():
         print('Exiting...')
         sys.exit()
 
-    prog_version = '0.1'
+    prog_version = '0.2'
     status, is_set_config_true = flags_and_arguments(prog_version, logger)
     if status == False: # Parsing the user entered flags or arguments has failed Exit.
         logger.critical("[CRITICAL] Main, Parsing the user entered flags or arguments has failed")
@@ -2640,7 +3170,8 @@ def main():
         sys.exit()
 
     # Hardcoding the filenames for encrypted credentials and the key file needed to decrypt the credentials.
-    cred_filename = 'ProbeCredFile.ini'
+    probe_cred_filename = 'ProbeCredFile.ini'
+    ng1_cred_filename = 'CredFile.ini'
     os_type = sys.platform
     if os_type == 'linux':
         probekey_file = '.probekey.key' # hide the probekey file if Linux.
@@ -2648,27 +3179,100 @@ def main():
         probekey_file = 'probekey.key' # don't hide it if Windows.
 
     # Get the user's credentials from a file and decrypt them.
-    user_creds = get_decrypted_credentials(cred_filename, probekey_file, logger)
-    if user_creds == False: # Creating the user_creds instance has failed. Exit.
-        logger.critical(f"[CRITICAL] Main, Getting the login credentials from file: {cred_filename} failed")
-        print(f"\n[CRITICAL] Main, Getting the probe login credentials from file: {cred_filename} failed")
+    probe_creds = get_probe_decrypted_credentials(probe_cred_filename, probekey_file, logger)
+    if probe_creds == False: # Creating the probe_creds instance has failed. Exit.
+        logger.critical(f"[CRITICAL] Main, Getting the login credentials from file: {probe_cred_filename} failed")
+        print(f"\n[CRITICAL] Main, Getting the probe login credentials from file: {probe_cred_filename} failed")
         print(f'Check the log file: {log_filename}. Exiting...')
         sys.exit()
 
-    # Get the target list of all the probes we need to read from and potentially write to.
-    probe_target_list = user_creds.probehostname.strip('][').split(', ') # Convert string to a list.
+    probe_target_list = probe_creds.probehostname.strip('][').split(', ') # Convert string to a list.
+
+    if 'ng1' in probe_target_list[0]: # The user requested to get the probe targets from an ng1.
+        # Disable the warnings for ignoring Self-Signed Certificates
+        requests.packages.urllib3.disable_warnings()
+        os_type = sys.platform
+        if os_type == 'linux':
+            ng1key_file = '.ng1key.key' # hide the probekey file if Linux.
+        else:
+            ng1key_file = 'ng1key.key' # don't hide it if Windows.
+        # Get the user's credentials from a file and decrypt them.
+        ng1_creds = get_ng1_decrypted_credentials(ng1_cred_filename, ng1key_file, logger)
+        if ng1_creds == False: # Creating the creds instance has failed. Exit.
+            logger.critical(f"[CRITICAL] Main, Getting the ng1 login credentials from file: {ng1_cred_filename} failed")
+            print(f"\n[CRITICAL] Main, Getting the ng1 login credentials from file: {ng1_cred_filename} failed")
+            print(f'Check the log file: {log_filename}. Exiting...')
+            sys.exit()
+
+        # Based on what is in the ng1_creds, determine all the parameters needed to make an nG1 API connection.
+        status, session = determine_ng1_api_params(ng1_creds, logger)
+        if status == False: # Determining the nG1 API parameters has failed. Exit.
+            logger.critical(f"[CRITICAL] Main, determining the nG1 API parameters has failed")
+            print(f"\n[CRITICAL] Main, determining the nG1 API parameters has failed")
+            print(f'Check the log file: {log_filename}. Exiting...')
+            sys.exit()
+
+        # Open an API session to nG1 and keep it open for all subsequent calls.
+        status = open_session(session, logger)
+        if status == False: # Opening the HTTP-HTTPS nG1 API session has failed. Exit.
+            logger.critical(f"[CRITICAL] Main, opening the HTTP-HTTPS nG1 API session has failed")
+            print(f"\n[CRITICAL] Main, opening the HTTP-HTTPS nG1 API session has failed")
+            print(f'Check the log file: {log_filename}. Exiting...')
+            sys.exit()
+
+        # Get active infinistrem / vStream info from the nG1 API. Returned as a python object (a json formatted dictionary).
+        config_type = 'devices'
+        devices_data, status = get_probe_targets_from_ng1(session, config_type, logger)
+        if status == False: # Getting the config data from the nG1 API has failed. Exit.
+            logger.critical(f"[CRITICAL] Main, getting the {config_type} data from the nG1 API has failed")
+            print(f"\n[CRITICAL] Main, getting the {config_type} data from the nG1 API has failed")
+            close_session(session, logger)
+            print(f'Check the log file: {log_filename}. Exiting...')
+            sys.exit()
+
+        probe_target_list, status = get_ip_addresses_on_all_devices(session, logger, devices_data)
+        # Create a printable version of the probe target list for display to the user.
+        if status == False: # Getting the config data from the nG1 API has failed. Exit.
+            logger.critical(f"[CRITICAL] Main, getting the {config_type} data from the nG1 API has failed")
+            print(f"\n[CRITICAL] Main, getting the {config_type} data from the nG1 API has failed")
+            close_session(session, logger)
+            print(f'Check the log file: {log_filename}. Exiting...')
+            sys.exit()
+        elif probe_target_list == []: # There were no active infinistreams or vstreams attached to the ng1.
+            logger.critical(f"[CRITICAL] Main, nGeniusONE reports no active Infinistreams or vStreams attached")
+            print(f"\n[CRITICAL] Main, nGeniusONE reports no active Infinistreams or vStreams attached")
+            print('Unable to proceed without any probe targets')
+            close_session(session, logger)
+            print(f'Check the log file: {log_filename}. Exiting...')
+            sys.exit()
+
+        # We are all finished, close the nG1 API session.
+        if close_session(session, logger) == False: # Failed to close the API session.
+            logger.critical(f"[CRITICAL] Main, close_session has failed")
+            print(f"\n[CRITICAL] Main, Unable to close the nG1 API session")
+            print(f'Check the log file: {log_filename}. Exiting...')
+            sys.exit()
+
+    else: #The user either selected a probe targets file or manually entered the target info.
+        # Get the target list of all the probes we need to read from and potentially write to.
+        probe_target_list = probe_creds.probehostname.strip('][').split(', ') # Convert string to a list.
+
     number_of_hosts = len(probe_target_list)
-    #print(f'probe_target_list is: {probe_target_list}')
-    #print(f'number_of_hosts is: {number_of_hosts}')
+    printable_target_list = [] # Initialize an empty list for character stripping.
+    for target in probe_target_list:
+        target = target.strip("''") # Strip off the quotes around each hostname - IP address.
+        printable_target_list.append(target)
+    print(f'probe_target_list is: {printable_target_list}')
+    print(f'number_of_hosts is: {number_of_hosts}')
     host_count = 0
-    for hostname in probe_target_list:
-        hostname = hostname.strip("''") # Strip off the quotes around each hostname - IP address.
+    for hostname in printable_target_list:
+        #hostname = hostname.strip("''") # Strip off the quotes around each hostname - IP address.
         host_count += 1
         if number_of_hosts > 1:
             print(f'\nWorking on probe {host_count} of {number_of_hosts}...')
             print('---------------------------------------------------------')
         # Open an SSH session to the probe.
-        client = open_ssh_session(user_creds, hostname, logger)
+        client = open_ssh_session(probe_creds, hostname, logger)
         if client == False: # Opening the SSH session to the probe has failed. Exit.
             logger.critical("[CRITICAL] Main, Opening the SSH connection failed")
             print("\n[CRITICAL] Main, Opening the SSH connection failed")
@@ -2690,7 +3294,7 @@ def main():
                 logger.critical("[CRITICAL] Main, Gathering the current probe configs has failed")
                 print("\n[CRITICAL] Main, Gathering the current probe configs has failed")
                 print('Closing the connection...')
-                close_status = close_ssh_session(user_creds, hostname, client, rem_con, logger)
+                close_status = close_ssh_session(probe_creds, hostname, client, rem_con, logger)
                 if close_status == False: # Connection close has failed.
                     logger.critical("[CRITICAL] Main, Closing the SSH connection failed")
                 print(f'Check the log file: {log_filename}. Exiting...')
@@ -2712,27 +3316,29 @@ def main():
         if write_status == False: # Writing the probe config to a json file has failed. Exit.
             logger.critical("[CRITICAL] Main, Backing up current config to file has failed")
             print("\n[CRITICAL] Main, Backing up current config to file has failed")
-            close_status = close_ssh_session(user_creds, hostname, client, rem_con, logger) # Write failure, close the SSH connection
+            close_status = close_ssh_session(probe_creds, hostname, client, rem_con, logger) # Write failure, close the SSH connection
             if close_status == False: # Connection close has failed.
                 logger.critical("[CRITICAL] Main, Closing the SSH connection failed")
             print(f'Check the log file: {log_filename}. Exiting...')
             sys.exit()
 
-        # Open the golden config file to use for setting the probe to the desired configuration.
-        # Read it in as a python dictionary that we can parse.
-        #new_probe_configs_dict = read_config_from_json(golden_probe_config_filename, logger)
-        #if new_probe_configs_dict == False: # The read operation failed. Bail out.
-            #print('Closing the connection...')
-            #close_status = close_ssh_session(user_creds, hostname, client, rem_con, logger)
-            #print('Exiting...')
-            #sys.exit()
+        if is_set_config_true == True: # The user specified the --set flag
+            # NOTE: All set operations are stubbed out in this version. This version only gets configs.
 
-        if is_set_config_true == True: # The user did not specify the --get flag
+            # Open the golden config file to use for setting the probe to the desired configuration.
+            # Read it in as a python dictionary that we can parse.
+            #new_probe_configs_dict = read_config_from_json(golden_probe_config_filename, logger)
+            #if new_probe_configs_dict == False: # The read operation failed. Bail out.
+                #print('Closing the connection...')
+                #close_status = close_ssh_session(probe_creds, hostname, client, rem_con, logger)
+                #print('Exiting...')
+                #sys.exit()
+
             #set_status = set_probe_configs(old_probe_configs_dict, interface_list, rem_con, logger)
             #if set_status == False: # Closing the SSH session to the probe has failed. Exit.
                 #logger.critical("[CRITICAL] Main, Setting the probe configs failed")
                 #print("\n[CRITICAL] Main, Setting the probe configs failed")
-                #close_status = close_ssh_session(user_creds, hostname, client, rem_con, logger)
+                #close_status = close_ssh_session(probe_creds, hostname, client, rem_con, logger)
                 #if close_status == False: # Connection close has failed.
                     #logger.critical("[CRITICAL] Main, Closing the SSH connection failed")
                 #print(f'Check the log file: {log_filename}. Exiting...')
@@ -2741,16 +3347,16 @@ def main():
                 #print('\n[INFO] All probe configurations were successfully applied')
                 #logger.info("[INFO] All probe configurations were successfully applied")
             print('\n[INFO] All probe configurations were successfully backed up')
-            print('[INFO] No modifications were made to the probe configuration as the --get flag was entered')
+            print('[INFO] No modifications were made to the probe configurations')
             logger.info("[INFO] All probe configurations were successfully backed up")
-            logger.info("[INFO] No modifications were made to the probe configuration as the --get flag was entered")
+            logger.info("[INFO] No modifications were made to the probe configurations")
         else: # The user specified the --get flag. We will not make any modifications.
             print('\n[INFO] All probe configurations were successfully backed up')
-            print('[INFO] No modifications were made to the probe configuration as the --get flag was entered')
+            print('[INFO] No modifications were made to the probe configurations')
             logger.info("[INFO] All probe configurations were successfully backed up")
-            logger.info("[INFO] No modifications were made to the probe configuration as the --get flag was entered")
+            logger.info("[INFO] No modifications were made to the probe configurations")
         # Close the SSH session to the probe.
-        close_status = close_ssh_session(user_creds, hostname, client, rem_con, logger)
+        close_status = close_ssh_session(probe_creds, hostname, client, rem_con, logger)
         if close_status == False: # Connection close has failed.
             logger.critical("[CRITICAL] Main, Closing the SSH connection failed")
             print("\n[CRITICAL] Main, Closing the SSH connection failed")
